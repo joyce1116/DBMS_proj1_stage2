@@ -9,7 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import Settings
 from app.db import initialize_database, make_client
 from app.routes import router
-from app.survey_routes import router as survey_router, register_error_handlers
+from app.survey_routes import router as survey_router, shared_router, register_error_handlers
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,13 +29,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             client.close()
 
     application = FastAPI(
-        title="Questionnaire system — draft management",
-        version="0.2.0",
+        title="Questionnaire system — survey lifecycle",
+        version="0.3.0",
         lifespan=lifespan,
     )
     application.state.settings = config
     application.include_router(router)
     application.include_router(survey_router)
+    application.include_router(shared_router)
     register_error_handlers(application)
 
     @application.exception_handler(RequestValidationError)

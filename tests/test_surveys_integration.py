@@ -63,7 +63,7 @@ def test_create_persists_owner_and_utc_dates_with_public_defaults(api, database,
     assert "schema_version" not in survey
     document = database.surveys.find_one({"_id": ObjectId(survey["id"])})
     assert document["owner_id"] == ObjectId(user["id"])
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["created_at"] == document["updated_at"]
     assert document["created_at"].utcoffset() == timedelta(0)
     assert document["deadline"].utcoffset() == timedelta(0)

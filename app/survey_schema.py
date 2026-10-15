@@ -1,4 +1,4 @@
-"""MongoDB 6-compatible schema for the draft-survey milestone.
+"""MongoDB 6-compatible v1 draft and v2 lifecycle survey schemas.
 
 Cross-field constraints (ranges, Unicode option uniqueness and stable ID
 ownership) are also enforced by application validation and draft editing logic.
@@ -48,7 +48,7 @@ _NUMERIC_BOUND = {
     "maximum": 10**15,
 }
 
-SURVEY_SCHEMA = {
+LEGACY_SURVEY_SCHEMA = {
     "bsonType": "object",
     "required": [
         "_id", "owner_id", "title", "description", "allow_anonymous", "allow_repeat",
@@ -96,3 +96,34 @@ SURVEY_SCHEMA = {
         },
     },
 }
+
+# Keep the exact v1 validator above for explicit, data-preserving upgrades.
+SURVEY_SCHEMA = deepcopy(LEGACY_SURVEY_SCHEMA)
+SURVEY_SCHEMA["required"] += ["share_id", "published_at", "closed_at"]
+SURVEY_SCHEMA["properties"].update({
+    "schema_version": {"bsonType": "int", "enum": [2]},
+    "status": {"bsonType": "string", "enum": ["draft", "published", "closed"]},
+    "share_id": {"bsonType": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{32}$"},
+    "published_at": {"bsonType": ["date", "null"]},
+    "closed_at": {"bsonType": ["date", "null"]},
+})
+SURVEY_SCHEMA["oneOf"] = [
+    {"properties": {
+        "status": {"enum": ["draft"]},
+        "share_id": {"bsonType": "null"},
+        "published_at": {"bsonType": "null"},
+        "closed_at": {"bsonType": "null"},
+    }},
+    {"properties": {
+        "status": {"enum": ["published"]},
+        "share_id": {"bsonType": "string"},
+        "published_at": {"bsonType": "date"},
+        "closed_at": {"bsonType": "null"},
+    }},
+    {"properties": {
+        "status": {"enum": ["closed"]},
+        "share_id": {"bsonType": "string"},
+        "published_at": {"bsonType": "date"},
+        "closed_at": {"bsonType": "date"},
+    }},
+]

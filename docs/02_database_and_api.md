@@ -1,6 +1,6 @@
 # 本轮数据库和 API 设计草稿
 
-记录日期：2026-10-15。本文件保留第一阶段第一个里程碑的账号设计记录。后续已经新增 `surveys` 集合、问卷草稿和题目配置，当前问卷模型、接口及并发方案见 [`07_survey_draft_design.md`](07_survey_draft_design.md)。以下历史范围描述仅指第一个里程碑，不代表当前全部进度。
+记录日期：2026-10-15。本文件保留第一阶段第一个里程碑的账号设计记录。后续问卷草稿和题目配置见 [`07_survey_draft_design.md`](07_survey_draft_design.md)，当前生命周期、分享及 schema v2 迁移见 [`09_survey_lifecycle_design.md`](09_survey_lifecycle_design.md)。以下历史范围描述仅指第一个里程碑，不代表当前全部进度。
 
 ## 为什么这样拆
 

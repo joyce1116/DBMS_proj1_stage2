@@ -16,6 +16,9 @@ class SurveyRepository:
     def find_owned(self, survey_id: ObjectId, owner_id: ObjectId) -> dict | None:
         return self.collection.find_one({"_id": survey_id, "owner_id": owner_id})
 
+    def find_shared(self, share_id: str) -> dict | None:
+        return self.collection.find_one({"share_id": share_id})
+
     def list_owned(self, owner_id: ObjectId, offset: int, limit: int) -> tuple[list[dict], int]:
         query = {"owner_id": owner_id}
         documents = list(
@@ -33,6 +36,17 @@ class SurveyRepository:
         # two requests both read the same old question array.
         return self.collection.find_one_and_update(
             {"_id": survey_id, "owner_id": owner_id, "revision": revision, "status": "draft"},
+            {"$set": changes, "$inc": {"revision": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+
+    def transition(
+        self, survey_id: ObjectId, owner_id: ObjectId, revision: int,
+        source_status: str, changes: dict,
+    ) -> dict | None:
+        return self.collection.find_one_and_update(
+            {"_id": survey_id, "owner_id": owner_id,
+             "revision": revision, "status": source_status},
             {"$set": changes, "$inc": {"revision": 1}},
             return_document=ReturnDocument.AFTER,
         )

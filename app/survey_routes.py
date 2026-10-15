@@ -1,18 +1,20 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.routes import CurrentUser
 from app.survey_models import (
-    QuestionInput, QuestionOrder, SurveyCreate, SurveyDetail, SurveyList, SurveyPatch,
+    QuestionInput, QuestionOrder, SharedSurvey, SurveyCreate, SurveyDetail, SurveyList,
+    SurveyPatch, SurveyTransition,
 )
 from app.survey_repository import SurveyRepository
 from app.survey_service import (
-    InvalidSurveyChange, RevisionConflict, SurveyNotFound, SurveyService,
+    InvalidSurveyChange, RevisionConflict, SurveyNotFound, SurveyService, SurveyUnavailable,
 )
 
 
-router = APIRouter(prefix="/api/surveys", tags=["survey drafts"])
+router = APIRouter(prefix="/api/surveys", tags=["surveys"])
+shared_router = APIRouter(tags=["shared surveys"])
 
 
 def get_survey_service(request: Request) -> SurveyService:
@@ -82,6 +84,22 @@ def reorder_questions(
     return service.reorder_questions(survey_id, user["id"], expected_revision, data.question_ids)
 
 
+@router.post("/{survey_id}/publish", response_model=SurveyDetail)
+def publish(survey_id: str, data: SurveyTransition, user: CurrentUser, service: Service) -> dict:
+    return service.publish(survey_id, user["id"], data.expected_revision)
+
+
+@router.post("/{survey_id}/close", response_model=SurveyDetail)
+def close(survey_id: str, data: SurveyTransition, user: CurrentUser, service: Service) -> dict:
+    return service.close(survey_id, user["id"], data.expected_revision)
+
+
+@shared_router.get("/survey/{share_id}", response_model=SharedSurvey)
+def shared(share_id: str, user: CurrentUser, service: Service, response: Response) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return service.shared(share_id)
+
+
 def register_error_handlers(application) -> None:
     # Domain errors are translated once; MongoDB errors retain the existing
     # application's 503 handler and credential errors retain its 401 behavior.
@@ -95,9 +113,16 @@ def register_error_handlers(application) -> None:
     async def conflict(request: Request, exc: RevisionConflict):
         return JSONResponse(
             status_code=409,
-            content={"detail": "Draft has changed; reload it and retry with the current revision"},
+            content={"detail": "Survey version or state has changed; reload before editing"},
         )
 
     @application.exception_handler(InvalidSurveyChange)
     async def invalid_change(request: Request, exc: InvalidSurveyChange):
         return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @application.exception_handler(SurveyUnavailable)
+    async def unavailable(request: Request, exc: SurveyUnavailable):
+        return JSONResponse(
+            status_code=410, content={"detail": "Survey is closed or expired"},
+            headers={"Cache-Control": "no-store"},
+        )

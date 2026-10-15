@@ -124,3 +124,48 @@
 4. 模型代理的一次临时 smoke 命令同样遇到 PowerShell 管道中文字符替换，改用 Unicode 转义检查；源文件由正确的 UTF-8 补丁创建，未将该命令编码问题误记成模型缺陷。
 
 原 37 个用例接入后先回归通过。新增用例首轮为 45 passed，随后补必答多选配置用例。最终全量 **83 passed, 1 warning in 13.47s**，包括原 37 项和新增 46 项。既有第三方 TestClient 弃用警告如实保留，没有新增依赖。详细输入、步骤与实际结果见 `08_survey_draft_tests.md`。
+
+## 续做：第一阶段第三个里程碑
+
+### 用户真实提示
+
+> 继续做吧。
+
+主代理沿用分步实施、不要一次做完第一阶段的约束，本轮选择发布/关闭/截止和登录只读分享，不实现网页、回答、跳转、提交或统计。全程在原代码上修改，没有开始第二阶段。
+
+### 子代理真实提示节选
+
+给设计审查：
+
+> 本轮继续第一阶段第3个里程碑，范围先定发布/关闭/截止时间判断/分享链接(登录后只读JSON)，不做网页、填写提交、跳转、统计。请只读审查现有app/与原文docs/00_assignment_source.md，快速给生命周期+兼容增量建议，重点需要显式迁移现surveys schema v1(仅draft)到v2，绝不丢弃旧数据/重做；发布后冻结题目/元数据、仅允许关闭，无重新发布；分享仍须登录，匿名不等于免登录。
+
+给迁移实现：
+
+> 仅负责app/survey_migration.py和scripts/migrate_surveys_v2.py（可新增tests/test_survey_migration.py专测你代码；不要改其他文件，root会修改survey_schema提供常量）。本轮显式离线MongoDB迁移surveys v1(仅draft)到v2，保留所有旧数据，启动不偷偷迁移。
+
+> 正常流程应用需停止(明确离线条件，不实现在线迁移)：在Mongo `schema_migrations` 记录 _id:'surveys_v1_to_v2',state:'in_progress'/'completed',backup_collection唯一名surveys_v1_backup_<uuid>,started_at/completed_at、counts；每个v1原文档备份到该新集合(包含原_id，一条不漏，不能覆盖既有数据)，再将surveys validator换为 {'$or':[{'$jsonSchema':LEGACY},{'$jsonSchema':new}]}；update_many只match schema_version1设置schema_version2,share_id:null,published_at:null,closed_at:null；最终核对无旧/非法doc并切new strict/error，记录完成。
+
+给生命周期测试：
+
+> 仅负责新增 tests/test_survey_lifecycle.py，不改原测试或app。root实现本轮第一阶段M3：发布/关闭/截止/登录分享JSON，不做页面/回答/跳转/统计。现有83tests必须回归，另一agent做显式迁移。
+
+> 建议约20-30项有价值case覆盖流程/状态、publish invalid、不写入、unauth+owner、deadline equality/expiry/closing、冻结全部编辑、share最小数据/必须login/匿名不豁免、并发双发布只有一成功、重建共享token与旧会话保留、schema/index。
+
+以上只是实际长提示的明确节选，完整接口契约由主代理一并给出。测试代理最终按有用参数边界实现 36 项，并自行补了发布/编辑竞争与真实重复分享标识重试；迁移代理实现 8 项迁移测试，没有把断言数冒充用例数。
+
+### 得到的代码与实际修改
+
+- 主代理在原 survey service/repository/routes 上增加发布/关闭 CAS、UTC 截止检查、独立分享响应和认证入口；没有重写账号模块。
+- 原 v1 schema 保留为 `LEGACY_SURVEY_SCHEMA`，在其复制结构上增加 v2 字段及状态/时间组合约束，保留题目结构；db 初始化增加 partial unique 分享索引并继续拒绝静默迁移。
+- 迁移代理生成 `app/survey_migration.py`、`scripts/migrate_surveys_v2.py` 和 8 项测试；主代理复核后依次运行 dry-run、正式迁移、逐字段核验和幂等重跑。
+- 生命周期代理新增 `tests/test_survey_lifecycle.py`。旧测试只有新文档 schema_version 的预期从 1 改为 2；原业务测试仍回归。
+- 主代理依据设计复核，将分享随机碰撞的重试限定为确实来自 share_id 索引的 DuplicateKeyError；其他数据库错误保留原处理方式。
+- 设计审查代理更新范围和报告草稿，主代理写设计、测试和运行记录并补实际结果。
+
+### 采用的选择与审查取舍
+
+发布后冻结、不能重开、当前截止时刻相等即过期、分享仍须登录均明确记录。审查曾建议分享响应连 revision 也不返回；主代理选择保留发布 revision，供后续提交引用固定内容，同时排除 owner、状态和账号等管理数据。这是 AI 作出的具体取舍，不伪装成原文逐字规定或用户亲自设计。
+
+本轮旧 83 项回归通过，新增生命周期测试首轮 34 项通过，后补两项定向通过，迁移 8 项通过；最终主代理实跑 **127 passed, 1 warning in 35.34s**。实际迁移保留两份旧草稿，备份和原字段核对完成；运行说明第 8 节的真实 HTTP 流程通过。详细输入输出在 `10_survey_lifecycle_tests.md`。
+
+本轮没有实际测试失败需要修复，不编造 AI 错误。迁移的中断是测试主动注入，真实开发库迁移一次成功。剩余网页、填写/跳转/提交/统计尚未实现。学生本人亲自复现、改动及独立设计的经历仍待本人核实补写。

@@ -1,6 +1,6 @@
 # 环境、运行与测试复现
 
-适用范围：第一阶段前两个里程碑，包含账号及问卷草稿/题目配置后端。尚未实现发布、填写、跳转、统计或用户网页。所有命令在 Windows PowerShell 的项目根目录执行；无需激活虚拟环境，也不需要创建 README。本轮沿用原有 `.venv` 和固定依赖，没有新增依赖。
+适用范围：第一阶段前三个里程碑，包含账号、问卷草稿/题目配置、发布关闭、截止判断及登录只读分享。尚未实现填写、跳转、提交、统计或用户网页。所有命令在 Windows PowerShell 的项目根目录执行；无需激活虚拟环境，也不需要创建 README。本轮沿用原有 `.venv` 和固定依赖，没有新增依赖。
 
 ## 本轮实测环境
 
@@ -74,13 +74,17 @@ New-Item -ItemType Directory -Path .runtime\mongo-data -Force | Out-Null
 
 ```powershell
 Set-Location D:\DBMS\project1
+# 本轮已将当前开发库迁移到v2。首次接续旧版本数据库时，先停止所有API进程，
+# MongoDB保持运行，再执行只读预检与正式迁移；新库/已迁移库会安全返回无需迁移。
+.\.venv\Scripts\python.exe -m scripts.migrate_surveys_v2 --dry-run
+.\.venv\Scripts\python.exe -m scripts.migrate_surveys_v2
 .\.venv\Scripts\python.exe -m scripts.init_db
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-预期初始化输出：`MongoDB initialized: survey_phase1 (users, sessions, surveys)`。初始化可以重复执行；API 启动也会做相同检查。此次只新增 surveys 集合与索引，保留已有用户和会话；无需清库、重建虚拟环境或手工迁移。MongoDB 不可连接或旧集合 schema 不兼容时会启动失败，先处理具体问题，不要清库。
+预期初始化输出：`MongoDB initialized: survey_phase1 (users, sessions, surveys)`。初始化可以重复执行；API 启动也会做相同检查。当前 surveys 为 v2，旧 v1 必须先执行上面的显式离线迁移，应用不会偷偷覆盖 validator；保留原有用户、会话、草稿及 MongoDB 内的迁移备份，无需清库或重建虚拟环境。若迁移失败，保持 API 停止，查明错误后重跑同一脚本，不删除进度记录或备份。详细原理见 `09_survey_lifecycle_design.md`。
 
-浏览器可访问 `http://127.0.0.1:8000/docs` 交互测试；账号与 survey drafts 两组接口均可操作。`/docs` 的默认界面使用外部 CDN，离线时用下列命令。JSON 接口契约为 `http://127.0.0.1:8000/openapi.json`。当前没有主页或问卷页面，访问 `/` 返回 404 是预期结果。
+浏览器可访问 `http://127.0.0.1:8000/docs` 交互测试；accounts、surveys 与 shared surveys 接口均可操作。`/docs` 的默认界面使用外部 CDN，离线时用下列命令。JSON 接口契约为 `http://127.0.0.1:8000/openapi.json`。当前没有主页或问卷页面，访问 `/` 返回 404 是预期结果；`/survey/<share_id>` 是需要 Bearer 认证的只读 JSON，不能直接当作填写网页。
 
 ## 4. 在终端 C 手动跑通账号流程
 
@@ -142,6 +146,7 @@ $env:TEST_MONGODB_URI = 'mongodb://127.0.0.1:27018'
 - MongoDB schema、API、关键逻辑：`docs/02_database_and_api.md` 和 `app/db.py`。
 - AI 日志、报告草稿、测试实测：`docs/03_ai_usage_log.md`、`docs/04_report_draft.md`、`docs/05_test_record.md`。
 - 新增问卷草稿设计与测试：`docs/07_survey_draft_design.md`、`docs/08_survey_draft_tests.md`。
+- 当前生命周期、迁移与测试：`docs/09_survey_lifecycle_design.md`、`docs/10_survey_lifecycle_tests.md`。
 - 运行生成的数据、日志和临时结果：`.runtime/`，不应当作代码提交，但数据库目录应保留用于继续开发。
 
 先在终端 B 按 Ctrl+C 停止 API，再在终端 A 按 Ctrl+C 停止 MongoDB。下一次按第 2、3 步启动，沿用现有用户和集合。
@@ -226,3 +231,79 @@ Invoke-Utf8RestMethod "$apiBase/api/surveys/$surveyId" -Headers $authHeaders
 ```
 
 测试范围是草稿和题目配置，不会发布或提交问卷。完整设计及预期错误见 `07_survey_draft_design.md`，实测结果见 `08_survey_draft_tests.md`。
+
+## 8. 继续复现：发布、登录分享与关闭
+
+完成上面的数据库迁移/启动 API，另开终端执行。下面命令会保留一个新的演示账号及一份最终关闭的问卷，不提交任何答案。使用已有 UTF-8 助手，不打印登录 token。
+
+```powershell
+Set-Location D:\DBMS\project1
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+. .\scripts\http_helpers.ps1
+$apiBase = 'http://127.0.0.1:8000'
+$demoUsername = 'publish_' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+$demoBody = @{ username = $demoUsername; password = 'CourseDemo_2026' } | ConvertTo-Json
+$newUser = Invoke-Utf8RestMethod "$apiBase/api/auth/register" -Method Post -Body $demoBody
+$loginResult = Invoke-Utf8RestMethod "$apiBase/api/auth/login" -Method Post -Body $demoBody
+$authHeaders = @{ Authorization = "Bearer $($loginResult.access_token)" }
+
+# 创建一份带未来截止时间的草稿，再添加题目。revision=2。
+$futureDeadline = [DateTimeOffset]::UtcNow.AddDays(1).ToString('o')
+$surveyBody = @{ title = '发布流程演示'; allow_anonymous = $true; deadline = $futureDeadline } | ConvertTo-Json
+$draft = Invoke-Utf8RestMethod "$apiBase/api/surveys" -Method Post -Headers $authHeaders -Body $surveyBody
+$surveyId = $draft.id
+$questionBody = @{ type = 'text'; title = '有什么建议'; required = $true; min_length = 1; max_length = 100 } | ConvertTo-Json
+$draft = Invoke-Utf8RestMethod "$apiBase/api/surveys/$surveyId/questions?expected_revision=$($draft.revision)" -Method Post -Headers $authHeaders -Body $questionBody
+
+# 发布：200，revision=3，开放，获得稳定分享URL。
+$stateBody = @{ expected_revision = $draft.revision } | ConvertTo-Json
+$published = Invoke-Utf8RestMethod "$apiBase/api/surveys/$surveyId/publish" -Method Post -Headers $authHeaders -Body $stateBody
+$published | Select-Object id,status,availability,is_open,revision,share_url
+$shareUrl = $apiBase + $published.share_url
+
+# 即便允许匿名，未登录读取仍为401。
+try {
+    Invoke-Utf8RestMethod $shareUrl | Out-Null
+    throw 'Expected HTTP 401'
+} catch {
+    if ([int]$_.Exception.Response.StatusCode -ne 401) { throw }
+    Write-Output 'Expected unauthenticated share: HTTP 401'
+}
+
+# 带登录凭证可读JSON。其他已登录用户持有该链接也可读；仍无编辑权。
+$shared = Invoke-Utf8RestMethod $shareUrl -Headers $authHeaders
+$shared | Select-Object title,deadline,revision,questions
+
+# 已发布内容冻结，合法的草稿修改应409。
+$patchBody = @{ expected_revision = $published.revision; title = 'This edit must fail' } | ConvertTo-Json
+try {
+    Invoke-Utf8RestMethod "$apiBase/api/surveys/$surveyId" -Method Patch -Headers $authHeaders -Body $patchBody | Out-Null
+    throw 'Expected HTTP 409'
+} catch {
+    if ([int]$_.Exception.Response.StatusCode -ne 409) { throw }
+    Write-Output 'Expected published edit rejection: HTTP 409'
+}
+
+# 关闭：200，revision=4，原分享地址保留。
+$stateBody = @{ expected_revision = $published.revision } | ConvertTo-Json
+$closed = Invoke-Utf8RestMethod "$apiBase/api/surveys/$surveyId/close" -Method Post -Headers $authHeaders -Body $stateBody
+$closed | Select-Object status,availability,is_open,revision,share_url
+try {
+    Invoke-Utf8RestMethod $shareUrl -Headers $authHeaders | Out-Null
+    throw 'Expected HTTP 410'
+} catch {
+    if ([int]$_.Exception.Response.StatusCode -ne 410) { throw }
+    Write-Output 'Expected closed share: HTTP 410'
+}
+Invoke-Utf8RestMethod "$apiBase/api/auth/logout" -Method Post -Headers $authHeaders | Out-Null
+```
+
+截止测试可用较近的未来时间创建/发布，实际到期后再读同一链接应为 410，管理详情为 status=published、availability=expired、is_open=false。自动化用例通过固定时间检查截止前、相等时和之后，避免为了测试长时间等待；不要直接改正在使用的数据来模拟截止。
+
+只跑本轮新增测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_survey_lifecycle.py tests/test_survey_migration.py -q
+```
+
+迁移测试在独立随机库中构造 v1 文档，不会再次迁移或清空开发库。完整测试仍使用第 5 节的 `python -m pytest -q`，所有结果见 `10_survey_lifecycle_tests.md`。

@@ -83,7 +83,8 @@ def initialize_database(db: Database) -> None:
             ):
                 raise RuntimeError(
                     f"Collection {name!r} has a different schema. "
-                    "Back up the data and apply an explicit migration."
+                    "Back up the data and apply an explicit migration. "
+                    + ("For surveys v1: python -m scripts.migrate_surveys_v2" if name == "surveys" else "")
                 ) from None
 
     db.users.create_index(
@@ -98,4 +99,10 @@ def initialize_database(db: Database) -> None:
     db.surveys.create_index(
         [("owner_id", ASCENDING), ("created_at", DESCENDING), ("_id", DESCENDING)],
         name="ix_surveys_owner_created",
+    )
+    db.surveys.create_index(
+        [("share_id", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"share_id": {"$type": "string"}},
+        name="uq_surveys_share_id",
     )

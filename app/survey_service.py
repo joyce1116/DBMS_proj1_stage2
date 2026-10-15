@@ -1,13 +1,18 @@
-"""Draft management only; no publication, answering or jump engine yet."""
+"""Draft editing and publication lifecycle; no answer or jump engine yet."""
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import re
+import secrets
 from uuid import uuid4
 
 from bson import ObjectId
+from pydantic import TypeAdapter, ValidationError
+from pymongo.errors import DuplicateKeyError
 
 from app.services import mongo_utc_now
 from app.survey_repository import SurveyRepository
+from app.survey_models import QuestionPublic
 
 
 class SurveyNotFound(Exception):
@@ -22,6 +27,21 @@ class InvalidSurveyChange(Exception):
     pass
 
 
+class SurveyUnavailable(Exception):
+    pass
+
+
+def survey_availability(document: dict, now: datetime | None = None) -> str:
+    if document["status"] == "draft":
+        return "draft"
+    if document["status"] == "closed":
+        return "closed"
+    checked_at = mongo_utc_now() if now is None else now
+    if document["deadline"] is not None and document["deadline"] <= checked_at:
+        return "expired"
+    return "open"
+
+
 def bson_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -30,6 +50,7 @@ def bson_datetime(value: datetime | None) -> datetime | None:
 
 
 def survey_public(document: dict, *, include_questions: bool = True) -> dict:
+    availability = survey_availability(document)
     public = {
         "id": str(document["_id"]),
         "owner_id": str(document["owner_id"]),
@@ -39,6 +60,12 @@ def survey_public(document: dict, *, include_questions: bool = True) -> dict:
         "allow_repeat": document["allow_repeat"],
         "deadline": document["deadline"],
         "status": document["status"],
+        "availability": availability,
+        "is_open": availability == "open",
+        "share_id": document["share_id"],
+        "share_url": "/survey/" + document["share_id"] if document["share_id"] else None,
+        "published_at": document["published_at"],
+        "closed_at": document["closed_at"],
         "revision": document["revision"],
         "question_count": len(document["questions"]),
         "created_at": document["created_at"],
@@ -62,7 +89,10 @@ class SurveyService:
             "deadline": bson_datetime(data["deadline"]),
             "status": "draft",
             "revision": 1,
-            "schema_version": 1,
+            "schema_version": 2,
+            "share_id": None,
+            "published_at": None,
+            "closed_at": None,
             "questions": [],
             "created_at": now,
             "updated_at": now,
@@ -158,3 +188,64 @@ class SurveyService:
         if len(question_ids) != len(by_id) or set(question_ids) != set(by_id):
             raise InvalidSurveyChange("Question order must contain every existing question exactly once")
         return self._save(document, {"questions": [by_id[question_id] for question_id in question_ids]})
+
+    def publish(self, survey_id: str, owner_id: str, revision: int) -> dict:
+        document = self._editable(survey_id, owner_id, revision)
+        now = mongo_utc_now()
+        if not document["questions"]:
+            raise InvalidSurveyChange("Add at least one question before publishing")
+        if document["deadline"] is not None and document["deadline"] <= now:
+            raise InvalidSurveyChange("Deadline must be in the future when publishing")
+        try:
+            TypeAdapter(list[QuestionPublic]).validate_python(document["questions"])
+        except ValidationError:
+            raise InvalidSurveyChange("Question configuration is invalid; repair the draft first") from None
+        question_ids = [question["id"] for question in document["questions"]]
+        option_ids = [option["id"] for question in document["questions"] for option in question.get("options", [])]
+        if len(set(question_ids)) != len(question_ids) or len(set(option_ids)) != len(option_ids):
+            raise InvalidSurveyChange("Question and option IDs must be unique before publishing")
+        for attempt in range(3):
+            try:
+                result = self.repository.transition(
+                    document["_id"], document["owner_id"], revision, "draft",
+                    {"status": "published", "share_id": secrets.token_urlsafe(24),
+                     "published_at": now, "updated_at": now},
+                )
+            except DuplicateKeyError as exc:
+                if not exc.details or exc.details.get("keyPattern") != {"share_id": 1} or attempt == 2:
+                    raise
+                continue
+            if result is None:
+                raise RevisionConflict
+            return survey_public(result)
+        raise AssertionError("Unreachable token allocation branch")
+
+    def close(self, survey_id: str, owner_id: str, revision: int) -> dict:
+        document = self._owned(survey_id, owner_id)
+        if document["revision"] != revision or document["status"] != "published":
+            raise RevisionConflict
+        now = mongo_utc_now()
+        result = self.repository.transition(
+            document["_id"], document["owner_id"], revision, "published",
+            {"status": "closed", "closed_at": now, "updated_at": now},
+        )
+        if result is None:
+            raise RevisionConflict
+        return survey_public(result)
+
+    def shared(self, share_id: str) -> dict:
+        if re.fullmatch(r"[A-Za-z0-9_-]{32}", share_id) is None:
+            raise SurveyNotFound
+        document = self.repository.find_shared(share_id)
+        if document is None or document["status"] == "draft":
+            raise SurveyNotFound
+        if survey_availability(document) != "open":
+            raise SurveyUnavailable
+        # Explicit allowlist: sharing must never expose owner/session details.
+        return {
+            "id": str(document["_id"]), "title": document["title"],
+            "description": document["description"],
+            "allow_anonymous": document["allow_anonymous"],
+            "allow_repeat": document["allow_repeat"], "deadline": document["deadline"],
+            "revision": document["revision"], "questions": document["questions"],
+        }

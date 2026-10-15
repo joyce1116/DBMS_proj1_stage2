@@ -215,6 +215,10 @@ class QuestionOrder(StrictModel):
         return value
 
 
+class SurveyTransition(StrictModel):
+    expected_revision: Revision
+
+
 class SurveySummary(StrictModel):
     id: str
     owner_id: str
@@ -223,7 +227,13 @@ class SurveySummary(StrictModel):
     allow_anonymous: bool
     allow_repeat: bool
     deadline: datetime | None
-    status: Literal["draft"]
+    status: Literal["draft", "published", "closed"]
+    availability: Literal["draft", "open", "expired", "closed"]
+    is_open: bool
+    share_id: str | None
+    share_url: str | None
+    published_at: datetime | None
+    closed_at: datetime | None
     revision: int
     question_count: int
     created_at: datetime
@@ -239,3 +249,16 @@ class SurveyList(StrictModel):
     total: int
     offset: int
     limit: int
+
+
+class SharedSurvey(StrictModel):
+    """Only question content and settings needed by a signed-in recipient."""
+
+    id: str
+    title: str
+    description: str
+    allow_anonymous: bool
+    allow_repeat: bool
+    deadline: datetime | None
+    revision: int
+    questions: list[QuestionPublic]

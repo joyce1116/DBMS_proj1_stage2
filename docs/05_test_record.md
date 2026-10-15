@@ -2,7 +2,7 @@
 
 日期：2026-10-15，时区 Asia/Shanghai。测试对象是工程、MongoDB 和账号接口，不是完整问卷系统。
 
-本文保留第一个里程碑的历史实测。续做草稿和题目配置后的最新全量结果为 83 项通过，详细新增用例、修复和 HTTP 复现见 [`08_survey_draft_tests.md`](08_survey_draft_tests.md)。
+本文保留第一个里程碑的历史实测。草稿和题目配置完成时为 83 项通过，见 [`08_survey_draft_tests.md`](08_survey_draft_tests.md)；当前已增加生命周期与迁移，全量 127 项通过，见 [`10_survey_lifecycle_tests.md`](10_survey_lifecycle_tests.md)。
 
 ## 环境、命令与实际结果
 
