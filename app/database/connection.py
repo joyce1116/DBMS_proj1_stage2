@@ -1,4 +1,4 @@
-"""MongoDB validation and indexes for the current milestone only.
+"""MongoDB validation and indexes for the phase-one backend.
 
 Existing collections and documents are preserved. Future schema changes belong
 in explicit migrations; startup does not silently replace an existing validator.
@@ -10,6 +10,7 @@ from pymongo.errors import CollectionInvalid
 
 from app.core.config import Settings
 from app.surveys.schema import SURVEY_SCHEMA
+from app.responses.schema import SUBMISSION_SCHEMA
 
 
 USER_SCHEMA = {
@@ -63,7 +64,8 @@ def make_client(settings: Settings) -> MongoClient:
 
 def initialize_database(db: Database) -> None:
     for name, schema in (
-        ("users", USER_SCHEMA), ("sessions", SESSION_SCHEMA), ("surveys", SURVEY_SCHEMA)
+        ("users", USER_SCHEMA), ("sessions", SESSION_SCHEMA), ("surveys", SURVEY_SCHEMA),
+        ("submissions", SUBMISSION_SCHEMA),
     ):
         try:
             db.create_collection(
@@ -84,7 +86,7 @@ def initialize_database(db: Database) -> None:
                 raise RuntimeError(
                     f"Collection {name!r} has a different schema. "
                     "Back up the data and apply an explicit migration. "
-                    + ("For surveys v1: python -m scripts.migrate_surveys_v2" if name == "surveys" else "")
+                    + ("For surveys: migrate_surveys_v2 (v1 only), then migrate_surveys_v3." if name == "surveys" else "")
                 ) from None
 
     db.users.create_index(
@@ -105,4 +107,16 @@ def initialize_database(db: Database) -> None:
         unique=True,
         partialFilterExpression={"share_id": {"$type": "string"}},
         name="uq_surveys_share_id",
+    )
+    db.submissions.create_index(
+        [("survey_id", ASCENDING), ("respondent_id", ASCENDING), ("request_id", ASCENDING)],
+        unique=True, name="uq_submissions_request",
+    )
+    db.submissions.create_index(
+        [("survey_id", ASCENDING), ("respondent_id", ASCENDING)],
+        unique=True, partialFilterExpression={"single_response": True}, name="uq_submissions_once",
+    )
+    db.submissions.create_index(
+        [("survey_id", ASCENDING), ("submitted_at", DESCENDING), ("_id", DESCENDING)],
+        name="ix_submissions_survey_time",
     )

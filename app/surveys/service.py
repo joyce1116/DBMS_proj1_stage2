@@ -1,4 +1,4 @@
-"""Draft editing and publication lifecycle; no answer or jump engine yet."""
+"""Draft editing, rule configuration and publication lifecycle."""
 
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -14,6 +14,7 @@ from app.core.time import mongo_utc_now
 from app.surveys.repository import SurveyRepository
 from app.surveys.models import QuestionPublic
 from app.surveys.validation import validate_answer
+from app.surveys.logic import validate_rule_set
 
 
 class SurveyNotFound(Exception):
@@ -74,6 +75,7 @@ def survey_public(document: dict, *, include_questions: bool = True) -> dict:
     }
     if include_questions:
         public["questions"] = document["questions"]
+        public["jump_rules"] = document["jump_rules"]
     return public
 
 
@@ -90,11 +92,14 @@ class SurveyService:
             "deadline": bson_datetime(data["deadline"]),
             "status": "draft",
             "revision": 1,
-            "schema_version": 2,
+            "schema_version": 3,
             "share_id": None,
             "published_at": None,
             "closed_at": None,
             "questions": [],
+            "jump_rules": [],
+            "submission_serial": 0,
+            "last_submission_at": None,
             "created_at": now,
             "updated_at": now,
         }
@@ -128,6 +133,8 @@ class SurveyService:
         return document
 
     def _save(self, document: dict, changes: dict) -> dict:
+        validate_rule_set(changes.get("questions", document["questions"]),
+                          changes.get("jump_rules", document["jump_rules"]))
         changes = {**changes, "updated_at": mongo_utc_now()}
         result = self.repository.update_draft(
             document["_id"], document["owner_id"], document["revision"], changes
@@ -135,6 +142,10 @@ class SurveyService:
         if result is None:
             raise RevisionConflict
         return survey_public(result)
+
+    def set_rules(self, survey_id: str, owner_id: str, revision: int, rules: list[dict]) -> dict:
+        document = self._editable(survey_id, owner_id, revision)
+        return self._save(document, {"jump_rules": rules})
 
     def patch(self, survey_id: str, owner_id: str, revision: int, changes: dict) -> dict:
         document = self._editable(survey_id, owner_id, revision)
@@ -205,6 +216,7 @@ class SurveyService:
         option_ids = [option["id"] for question in document["questions"] for option in question.get("options", [])]
         if len(set(question_ids)) != len(question_ids) or len(set(option_ids)) != len(option_ids):
             raise InvalidSurveyChange("Question and option IDs must be unique before publishing")
+        validate_rule_set(document["questions"], document["jump_rules"])
         for attempt in range(3):
             try:
                 result = self.repository.transition(
@@ -234,14 +246,18 @@ class SurveyService:
             raise RevisionConflict
         return survey_public(result)
 
-    def shared(self, share_id: str) -> dict:
+    def shared_document(self, share_id: str, *, require_open: bool = True) -> dict:
         if re.fullmatch(r"[A-Za-z0-9_-]{32}", share_id) is None:
             raise SurveyNotFound
         document = self.repository.find_shared(share_id)
         if document is None or document["status"] == "draft":
             raise SurveyNotFound
-        if survey_availability(document) != "open":
+        if require_open and survey_availability(document) != "open":
             raise SurveyUnavailable
+        return document
+
+    def shared(self, share_id: str) -> dict:
+        document = self.shared_document(share_id)
         # Explicit allowlist: sharing must never expose owner/session details.
         return {
             "id": str(document["_id"]), "title": document["title"],
@@ -249,6 +265,7 @@ class SurveyService:
             "allow_anonymous": document["allow_anonymous"],
             "allow_repeat": document["allow_repeat"], "deadline": document["deadline"],
             "revision": document["revision"], "questions": document["questions"],
+            "jump_rules": document["jump_rules"],
         }
 
     def check_answer(self, share_id: str, question_id: str, value: object) -> dict:

@@ -1,4 +1,4 @@
-"""MongoDB 6-compatible v1 draft and v2 lifecycle survey schemas.
+"""MongoDB 6-compatible historical schemas and current v3 rules/submission gate.
 
 Cross-field constraints (ranges, Unicode option uniqueness and stable ID
 ownership) are also enforced by application validation and draft editing logic.
@@ -127,3 +127,34 @@ SURVEY_SCHEMA["oneOf"] = [
         "closed_at": {"bsonType": "date"},
     }},
 ]
+
+# Immutable target of the original v1 -> v2 migration.
+SURVEY_SCHEMA_V2 = deepcopy(SURVEY_SCHEMA)
+
+_RULE_COMMON = {
+    "source_id": deepcopy(_QUESTION_PROPERTIES["id"]),
+    "target_id": {"bsonType": "string", "pattern": "^(q_[a-f0-9]{32}|end)$"},
+}
+_RULE_SCHEMAS = []
+for kind, extra in (
+    ("choice", {
+        "operator": {"enum": ["eq", "contains_any", "contains_all"]},
+        "option_ids": {"bsonType": "array", "minItems": 1, "maxItems": 50,
+                       "uniqueItems": True, "items": deepcopy(_OPTION_SCHEMA["properties"]["id"])},
+    }),
+    ("number", {
+        "operator": {"enum": ["eq", "ne", "gt", "gte", "lt", "lte"]},
+        "value": {**deepcopy(_NUMERIC_BOUND), "bsonType": ["int", "long", "double"]},
+    }),
+):
+    properties = {**deepcopy(_RULE_COMMON), "kind": {"enum": [kind]}, **extra}
+    _RULE_SCHEMAS.append({"bsonType": "object", "required": list(properties),
+                          "additionalProperties": False, "properties": properties})
+
+SURVEY_SCHEMA["required"] += ["jump_rules", "submission_serial", "last_submission_at"]
+SURVEY_SCHEMA["properties"].update({
+    "schema_version": {"bsonType": "int", "enum": [3]},
+    "jump_rules": {"bsonType": "array", "maxItems": 200, "items": {"oneOf": _RULE_SCHEMAS}},
+    "submission_serial": {"bsonType": ["int", "long"], "minimum": 0},
+    "last_submission_at": {"bsonType": ["date", "null"]},
+})

@@ -5,13 +5,14 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from app.auth.routes import CurrentUser
 from app.surveys.models import (
     AnswerCheck, AnswerChecked, QuestionInput, QuestionOrder, SharedSurvey, SurveyCreate, SurveyDetail, SurveyList,
-    SurveyPatch, SurveyTransition,
+    SurveyPatch, SurveyTransition, RulesPatch,
 )
 from app.surveys.repository import SurveyRepository
 from app.surveys.service import (
     InvalidSurveyChange, RevisionConflict, SurveyNotFound, SurveyService, SurveyUnavailable,
 )
 from app.surveys.validation import InvalidAnswer
+from app.surveys.logic import InvalidRules
 
 
 router = APIRouter(prefix="/api/surveys", tags=["surveys"])
@@ -23,7 +24,7 @@ def get_survey_service(request: Request) -> SurveyService:
 
 
 Service = Annotated[SurveyService, Depends(get_survey_service)]
-Revision = Annotated[int, Query(ge=1)]
+Revision = Annotated[int, Query(ge=1, le=2147483647)]
 
 
 @router.post("", status_code=201, response_model=SurveyDetail)
@@ -90,6 +91,12 @@ def publish(survey_id: str, data: SurveyTransition, user: CurrentUser, service: 
     return service.publish(survey_id, user["id"], data.expected_revision)
 
 
+@router.put("/{survey_id}/rules", response_model=SurveyDetail)
+def set_rules(survey_id: str, data: RulesPatch, user: CurrentUser, service: Service) -> dict:
+    return service.set_rules(survey_id, user["id"], data.expected_revision,
+                             [rule.model_dump() for rule in data.rules])
+
+
 @router.post("/{survey_id}/close", response_model=SurveyDetail)
 def close(survey_id: str, data: SurveyTransition, user: CurrentUser, service: Service) -> dict:
     return service.close(survey_id, user["id"], data.expected_revision)
@@ -130,9 +137,10 @@ def register_error_handlers(application) -> None:
     async def conflict(request: Request, exc: RevisionConflict):
         return JSONResponse(
             status_code=409,
-            content={"detail": "Survey version or state has changed; reload before editing"},
+            content={"detail": "Survey version or state has changed; reload before retrying"},
         )
 
+    @application.exception_handler(InvalidRules)
     @application.exception_handler(InvalidSurveyChange)
     async def invalid_change(request: Request, exc: InvalidSurveyChange):
         return JSONResponse(status_code=422, content={"detail": str(exc)})

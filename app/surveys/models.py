@@ -33,7 +33,7 @@ OptionLabel = Annotated[
 Description = Annotated[str, StringConstraints(strict=True, max_length=5000)]
 QuestionId = Annotated[str, StringConstraints(strict=True, pattern=r"^q_[a-f0-9]{32}$")]
 OptionId = Annotated[str, StringConstraints(strict=True, pattern=r"^opt_[a-f0-9]{32}$")]
-Revision = Annotated[StrictInt, Field(ge=1)]
+Revision = Annotated[StrictInt, Field(ge=1, le=2147483647)]
 NonnegativeInt = Annotated[StrictInt, Field(ge=0)]
 
 
@@ -219,6 +219,69 @@ class SurveyTransition(StrictModel):
     expected_revision: Revision
 
 
+class RuleBase(StrictModel):
+    source_id: QuestionId
+    target_id: QuestionId | Literal["end"]
+
+
+class ChoiceRule(RuleBase):
+    kind: Literal["choice"]
+    operator: Literal["eq", "contains_any", "contains_all"]
+    option_ids: Annotated[list[OptionId], Field(min_length=1, max_length=50)]
+
+    @field_validator("option_ids")
+    @classmethod
+    def unique_options(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("Rule options must be unique")
+        return value
+
+
+class NumberRule(RuleBase):
+    kind: Literal["number"]
+    operator: Literal["eq", "ne", "gt", "gte", "lt", "lte"]
+    value: NumericBound
+
+
+JumpRule = Annotated[ChoiceRule | NumberRule, Field(discriminator="kind")]
+
+
+class RulesPatch(StrictModel):
+    expected_revision: Revision
+    rules: Annotated[list[JumpRule], Field(max_length=200)]
+
+
+class AnswerBatch(StrictModel):
+    survey_revision: Revision
+    answers: Annotated[dict[QuestionId, Any], Field(max_length=100)]
+
+
+class SubmissionInput(AnswerBatch):
+    request_id: Annotated[str, StringConstraints(strict=True, pattern=r"^[A-Za-z0-9_-]{8,64}$")]
+    anonymous: StrictBool = False
+
+
+class NormalizedAnswer(StrictModel):
+    question_id: QuestionId
+    value: str | list[str] | int | float | None
+
+
+class NavigationResult(StrictModel):
+    path: list[QuestionId]
+    answers: list[NormalizedAnswer]
+    completed: bool
+    next_question_id: QuestionId | None
+
+
+class SubmissionReceipt(StrictModel):
+    response_id: str
+    survey_id: str
+    survey_revision: int
+    submitted_at: datetime
+    anonymous: bool
+    path: list[QuestionId]
+
+
 class SurveySummary(StrictModel):
     id: str
     owner_id: str
@@ -242,6 +305,7 @@ class SurveySummary(StrictModel):
 
 class SurveyDetail(SurveySummary):
     questions: list[QuestionPublic]
+    jump_rules: list[JumpRule]
 
 
 class SurveyList(StrictModel):
@@ -262,6 +326,7 @@ class SharedSurvey(StrictModel):
     deadline: datetime | None
     revision: int
     questions: list[QuestionPublic]
+    jump_rules: list[JumpRule]
 
 
 class AnswerCheck(StrictModel):

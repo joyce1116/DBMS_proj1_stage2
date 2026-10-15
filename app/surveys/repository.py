@@ -50,3 +50,14 @@ class SurveyRepository:
             {"$set": changes, "$inc": {"revision": 1}},
             return_document=ReturnDocument.AFTER,
         )
+
+    def accept_submission(self, survey_id: ObjectId, revision: int) -> dict | None:
+        # This single-document gate orders acceptance against closing. The
+        # server's clock checks the deadline and timestamps the accepted attempt.
+        return self.collection.find_one_and_update(
+            {"_id": survey_id, "revision": revision, "status": "published",
+             "$expr": {"$or": [{"$eq": ["$deadline", None]}, {"$gt": ["$deadline", "$$NOW"]}]}},
+            [{"$set": {"submission_serial": {"$add": ["$submission_serial", 1]},
+                       "last_submission_at": "$$NOW"}}],
+            return_document=ReturnDocument.AFTER,
+        )

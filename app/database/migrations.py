@@ -1,4 +1,4 @@
-"""Explicit, offline migration of survey drafts from schema v1 to v2.
+"""Explicit, resumable offline migrations; original documents are retained.
 
 Stop every application process before calling this function. MongoDB standalone
 does not provide a transaction spanning collMod and document updates; a durable
@@ -6,47 +6,63 @@ record and untouched original snapshots make interrupted runs resumable.
 """
 
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
 from uuid import uuid4
 
 from pymongo.database import Database
 
-from app.surveys.schema import LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA
+from app.surveys.schema import LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA_V2, SURVEY_SCHEMA
 
 
 MIGRATION_ID = "surveys_v1_to_v2"
 LEGACY_VALIDATOR = {"$jsonSchema": LEGACY_SURVEY_SCHEMA}
-CURRENT_VALIDATOR = {"$jsonSchema": SURVEY_SCHEMA}
+CURRENT_VALIDATOR = {"$jsonSchema": SURVEY_SCHEMA_V2}
 TRANSITION_VALIDATOR = {"$or": [LEGACY_VALIDATOR, CURRENT_VALIDATOR]}
-_BACKUP_NAME = re.compile(r"^surveys_v1_backup_[a-f0-9]{32}$")
 
 
-def _upgraded(document: dict) -> dict:
-    return {
-        **deepcopy(document),
-        "schema_version": 2,
-        "share_id": None,
-        "published_at": None,
-        "closed_at": None,
-    }
+@dataclass(frozen=True)
+class MigrationPlan:
+    source: int
+    target: int
+    source_validator: dict
+    target_validator: dict
+    defaults: dict
+
+    @property
+    def migration_id(self):
+        return f"surveys_v{self.source}_to_v{self.target}"
+
+    @property
+    def transition(self):
+        return {"$or": [self.source_validator, self.target_validator]}
+
+    def upgraded(self, document):
+        return {**deepcopy(document), **deepcopy(self.defaults), "schema_version": self.target}
 
 
-def _validate_record(record: dict) -> None:
+V2_PLAN = MigrationPlan(1, 2, LEGACY_VALIDATOR, CURRENT_VALIDATOR,
+                        {"share_id": None, "published_at": None, "closed_at": None})
+V3_PLAN = MigrationPlan(2, 3, CURRENT_VALIDATOR, {"$jsonSchema": SURVEY_SCHEMA},
+                        {"jump_rules": [], "submission_serial": 0, "last_submission_at": None})
+
+
+def _validate_record(record: dict, plan: MigrationPlan) -> None:
     counts = record.get("counts")
     if (
         record.get("state") not in ("in_progress", "completed")
         or not isinstance(record.get("backup_collection"), str)
-        or not _BACKUP_NAME.fullmatch(record["backup_collection"])
+        or not re.fullmatch(rf"surveys_v{plan.source}_backup_[a-f0-9]{{32}}", record["backup_collection"])
         or not isinstance(record.get("started_at"), datetime)
         or not isinstance(counts, dict)
         or any(
             type(counts.get(key)) is not int or counts[key] < 0
-            for key in ("original_v1", "original_v2", "total")
+            for key in (f"original_v{plan.source}", f"original_v{plan.target}", "total")
         )
     ):
         raise RuntimeError("Migration metadata is unknown or damaged; no data was changed.")
-    if counts["original_v1"] + counts["original_v2"] != counts["total"]:
+    if counts[f"original_v{plan.source}"] + counts[f"original_v{plan.target}"] != counts["total"]:
         raise RuntimeError("Migration metadata counts are inconsistent.")
     if record["state"] == "completed" and not isinstance(
         record.get("completed_at"), datetime
@@ -54,21 +70,21 @@ def _validate_record(record: dict) -> None:
         raise RuntimeError("Completed migration metadata has no valid completion time.")
 
 
-def _check_snapshots(db: Database, record: dict, v1_count: int, v2_count: int) -> int:
+def _check_snapshots(db: Database, record: dict, source_count: int, target_count: int, plan: MigrationPlan) -> int:
     """Check owned snapshots without creating or changing any collection."""
     counts = record["counts"]
-    if v1_count + v2_count != counts["total"]:
+    if source_count + target_count != counts["total"]:
         raise RuntimeError("Survey count changed during migration; keep the app stopped.")
     backup_name = record["backup_collection"]
     if backup_name not in db.list_collection_names():
-        if v1_count != counts["original_v1"] or v2_count != counts["original_v2"]:
+        if source_count != counts[f"original_v{plan.source}"] or target_count != counts[f"original_v{plan.target}"]:
             raise RuntimeError("Converted surveys have no original backup collection.")
         if record["state"] == "completed":
             raise RuntimeError("Completed migration is missing its backup collection.")
         return 0
 
     backup = db[backup_name]
-    if backup.find_one({"$nor": [LEGACY_VALIDATOR]}, {"_id": 1}):
+    if backup.find_one({"$nor": [plan.source_validator]}, {"_id": 1}):
         raise RuntimeError("Migration backup contains an invalid original survey.")
     converted = 0
     backup_count = 0
@@ -77,22 +93,22 @@ def _check_snapshots(db: Database, record: dict, v1_count: int, v2_count: int) -
         current = db.surveys.find_one({"_id": original["_id"]})
         if current == original:
             continue
-        if current == _upgraded(original):
+        if current == plan.upgraded(original):
             converted += 1
             continue
         raise RuntimeError("A survey differs from its original snapshot; keep the app stopped.")
     if (
-        backup_count > counts["original_v1"]
-        or v1_count + converted != counts["original_v1"]
-        or v2_count - converted != counts["original_v2"]
+        backup_count > counts[f"original_v{plan.source}"]
+        or source_count + converted != counts[f"original_v{plan.source}"]
+        or target_count - converted != counts[f"original_v{plan.target}"]
     ):
         raise RuntimeError("Survey and backup counts do not match the migration record.")
-    if record["state"] == "completed" and backup_count != counts["original_v1"]:
+    if record["state"] == "completed" and backup_count != counts[f"original_v{plan.source}"]:
         raise RuntimeError("Completed migration has an incomplete backup.")
     return backup_count
 
 
-def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
+def _migrate(db: Database, plan: MigrationPlan, *, dry_run: bool = False) -> dict:
     """Migrate only known schemas; retain IDs, revisions and original snapshots.
 
     ``dry_run`` performs the same preflight reads and makes no writes at all.
@@ -100,8 +116,12 @@ def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
     when resuming an interrupted migration. Unknown schemas or corrupt input
     fail before migration writes. No collections are deleted or rolled back.
     """
+    LEGACY_VALIDATOR = plan.source_validator
+    CURRENT_VALIDATOR = plan.target_validator
+    TRANSITION_VALIDATOR = plan.transition
+    MIGRATION_ID = plan.migration_id
     if "surveys" not in db.list_collection_names():
-        return {"state": "absent", "dry_run": dry_run, "v1_count": 0, "v2_count": 0}
+        return {"state": "absent", "dry_run": dry_run, f"v{plan.source}_count": 0, f"v{plan.target}_count": 0}
 
     options = db.surveys.options()
     validator = options.get("validator")
@@ -114,50 +134,50 @@ def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
     if db.surveys.find_one({"$nor": [LEGACY_VALIDATOR, CURRENT_VALIDATOR]}, {"_id": 1}):
         raise RuntimeError("Surveys contain an invalid document or unknown schema version.")
 
-    v1_count = db.surveys.count_documents({"schema_version": 1})
-    v2_count = db.surveys.count_documents({"schema_version": 2})
+    source_count = db.surveys.count_documents({"schema_version": plan.source})
+    target_count = db.surveys.count_documents({"schema_version": plan.target})
     record = db.schema_migrations.find_one({"_id": MIGRATION_ID})
     summary = {
         "dry_run": dry_run,
-        "v1_count": v1_count,
-        "v2_count": v2_count,
+        f"v{plan.source}_count": source_count,
+        f"v{plan.target}_count": target_count,
         "backup_collection": None if record is None else record.get("backup_collection"),
     }
     if record is None:
         if validator == CURRENT_VALIDATOR:
-            if v1_count:
-                raise RuntimeError("The v2 validator contains legacy surveys without migration metadata.")
-            return {**summary, "state": "already_v2"}
-        if validator != LEGACY_VALIDATOR or v2_count:
+            if source_count:
+                raise RuntimeError("The target validator contains legacy surveys without migration metadata.")
+            return {**summary, "state": f"already_v{plan.target}"}
+        if validator != LEGACY_VALIDATOR or target_count:
             raise RuntimeError("A partial migration has no matching migration record.")
     else:
-        _validate_record(record)
+        _validate_record(record, plan)
         if record["state"] == "completed" and (
-            validator != CURRENT_VALIDATOR or v1_count
+            validator != CURRENT_VALIDATOR or source_count
         ):
             raise RuntimeError("Completed migration metadata conflicts with the surveys schema.")
         if record["state"] == "completed":
-            # The app may have edited/published old drafts or created new v2
+            # The app may have edited/published old drafts or created new target
             # surveys after completion. Original snapshots stay independent.
             backup_name = record["backup_collection"]
             if (
                 backup_name not in db.list_collection_names()
-                or db[backup_name].count_documents({}) != record["counts"]["original_v1"]
+                or db[backup_name].count_documents({}) != record["counts"][f"original_v{plan.source}"]
                 or db[backup_name].find_one({"$nor": [LEGACY_VALIDATOR]}, {"_id": 1})
             ):
                 raise RuntimeError("Completed migration has a missing or damaged original backup.")
-            return {**summary, "state": "already_v2"}
-        if (validator == LEGACY_VALIDATOR and v2_count) or (
-            validator == CURRENT_VALIDATOR and v1_count
+            return {**summary, "state": f"already_v{plan.target}"}
+        if (validator == LEGACY_VALIDATOR and target_count) or (
+            validator == CURRENT_VALIDATOR and source_count
         ):
             raise RuntimeError("Migration validator conflicts with current survey versions.")
-        _check_snapshots(db, record, v1_count, v2_count)
+        _check_snapshots(db, record, source_count, target_count, plan)
 
     if dry_run:
         return {**summary, "state": "dry_run"}
 
     if record is None:
-        backup_name = "surveys_v1_backup_" + uuid4().hex
+        backup_name = f"surveys_v{plan.source}_backup_" + uuid4().hex
         if backup_name in db.list_collection_names():
             raise RuntimeError("Proposed backup collection already exists and is not owned by this migration.")
         record = {
@@ -166,9 +186,9 @@ def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
             "backup_collection": backup_name,
             "started_at": datetime.now(timezone.utc),
             "counts": {
-                "original_v1": v1_count,
-                "original_v2": v2_count,
-                "total": v1_count + v2_count,
+                f"original_v{plan.source}": source_count,
+                f"original_v{plan.target}": target_count,
+                "total": source_count + target_count,
             },
         }
         db.schema_migrations.insert_one(record)
@@ -177,13 +197,13 @@ def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
     if backup_name not in db.list_collection_names():
         db.create_collection(backup_name)
     backup = db[backup_name]
-    for original in db.surveys.find({"schema_version": 1}):
+    for original in db.surveys.find({"schema_version": plan.source}):
         # Existing snapshots retain the first pre-migration document exactly.
         backup.update_one(
             {"_id": original["_id"]}, {"$setOnInsert": original}, upsert=True
         )
-    backed_up = _check_snapshots(db, record, v1_count, v2_count)
-    if backed_up != record["counts"]["original_v1"]:
+    backed_up = _check_snapshots(db, record, source_count, target_count, plan)
+    if backed_up != record["counts"][f"original_v{plan.source}"]:
         raise RuntimeError("The original snapshot is incomplete; no surveys were converted.")
 
     if validator != CURRENT_VALIDATOR:
@@ -194,17 +214,14 @@ def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
             "validationAction": "error",
         })
         db.surveys.update_many(
-            {"schema_version": 1},
+            {"schema_version": plan.source},
             {"$set": {
-                "schema_version": 2,
-                "share_id": None,
-                "published_at": None,
-                "closed_at": None,
+                **deepcopy(plan.defaults), "schema_version": plan.target,
             }},
         )
     if db.surveys.find_one({"$nor": [CURRENT_VALIDATOR]}, {"_id": 1}):
-        raise RuntimeError("Final v2 validation failed; snapshots are retained for inspection.")
-    _check_snapshots(db, record, 0, db.surveys.count_documents({}))
+        raise RuntimeError("Final target validation failed; snapshots are retained for inspection.")
+    _check_snapshots(db, record, 0, db.surveys.count_documents({}), plan)
     db.command({
         "collMod": "surveys",
         "validator": CURRENT_VALIDATOR,
@@ -217,12 +234,20 @@ def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
             "state": "completed",
             "completed_at": datetime.now(timezone.utc),
             "counts.backup": backed_up,
-            "counts.converted": record["counts"]["original_v1"],
+            "counts.converted": record["counts"][f"original_v{plan.source}"],
         }},
     )
     return {
         **summary,
         "state": "completed",
         "backup_collection": backup_name,
-        "converted_count": record["counts"]["original_v1"],
+        "converted_count": record["counts"][f"original_v{plan.source}"],
     }
+
+
+def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
+    return _migrate(db, V2_PLAN, dry_run=dry_run)
+
+
+def migrate_surveys_v3(db: Database, *, dry_run: bool = False) -> dict:
+    return _migrate(db, V3_PLAN, dry_run=dry_run)
