@@ -31,3 +31,7 @@ starlette==1.8.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 uvicorn==0.54.0
+# Optional browser test runner; normal application startup does not import it.
+playwright==1.64.0
+pyee==14.0.0
+greenlet==3.5.6

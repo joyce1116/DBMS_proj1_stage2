@@ -11,6 +11,7 @@ from app.database.connection import initialize_database, make_client
 from app.auth.routes import router
 from app.surveys.routes import router as survey_router, shared_router, register_error_handlers
 from app.responses.routes import router as response_router, register_error_handlers as response_errors
+from app.web.routes import install_web
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -31,7 +32,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application = FastAPI(
         title="Questionnaire system",
-        version="0.5.0",
+        version="0.6.0",
         lifespan=lifespan,
     )
     application.state.settings = config
@@ -41,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(response_router)
     register_error_handlers(application)
     response_errors(application)
+    install_web(application)
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
