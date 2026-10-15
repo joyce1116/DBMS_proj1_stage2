@@ -10,9 +10,10 @@ from bson import ObjectId
 from pydantic import TypeAdapter, ValidationError
 from pymongo.errors import DuplicateKeyError
 
-from app.services import mongo_utc_now
-from app.survey_repository import SurveyRepository
-from app.survey_models import QuestionPublic
+from app.core.time import mongo_utc_now
+from app.surveys.repository import SurveyRepository
+from app.surveys.models import QuestionPublic
+from app.surveys.validation import validate_answer
 
 
 class SurveyNotFound(Exception):
@@ -249,3 +250,11 @@ class SurveyService:
             "allow_repeat": document["allow_repeat"], "deadline": document["deadline"],
             "revision": document["revision"], "questions": document["questions"],
         }
+
+    def check_answer(self, share_id: str, question_id: str, value: object) -> dict:
+        survey = self.shared(share_id)
+        for question in survey["questions"]:
+            if question["id"] == question_id:
+                normalized = validate_answer(question, value)
+                return {"question_id": question_id, "valid": True, "value": normalized}
+        raise SurveyNotFound

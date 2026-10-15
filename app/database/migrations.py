@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from pymongo.database import Database
 
-from app.survey_schema import LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA
+from app.surveys.schema import LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA
 
 
 MIGRATION_ID = "surveys_v1_to_v2"

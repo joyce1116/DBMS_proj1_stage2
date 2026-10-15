@@ -11,9 +11,9 @@ import pytest
 from pymongo import MongoClient
 from pymongo.errors import WriteError
 
-from app.db import initialize_database
+from app.database.connection import initialize_database
 from app.main import create_app
-from app.security import hash_token, verify_password
+from app.auth.security import hash_token, verify_password
 
 
 pytestmark = pytest.mark.integration

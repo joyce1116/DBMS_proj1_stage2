@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from math import ceil, floor, isfinite
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from unicodedata import normalize
 
 from pydantic import (
@@ -262,3 +262,14 @@ class SharedSurvey(StrictModel):
     deadline: datetime | None
     revision: int
     questions: list[QuestionPublic]
+
+
+class AnswerCheck(StrictModel):
+    question_id: QuestionId
+    value: Any
+
+
+class AnswerChecked(StrictModel):
+    question_id: QuestionId
+    valid: Literal[True] = True
+    value: str | list[str] | int | float | None

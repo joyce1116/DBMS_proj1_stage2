@@ -1,1 +1,1 @@
-"""Phase one questionnaire project: the account foundation."""
+"""Phase one questionnaire system, extended incrementally."""

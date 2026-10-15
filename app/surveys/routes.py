@@ -2,15 +2,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from app.routes import CurrentUser
-from app.survey_models import (
-    QuestionInput, QuestionOrder, SharedSurvey, SurveyCreate, SurveyDetail, SurveyList,
+from app.auth.routes import CurrentUser
+from app.surveys.models import (
+    AnswerCheck, AnswerChecked, QuestionInput, QuestionOrder, SharedSurvey, SurveyCreate, SurveyDetail, SurveyList,
     SurveyPatch, SurveyTransition,
 )
-from app.survey_repository import SurveyRepository
-from app.survey_service import (
+from app.surveys.repository import SurveyRepository
+from app.surveys.service import (
     InvalidSurveyChange, RevisionConflict, SurveyNotFound, SurveyService, SurveyUnavailable,
 )
+from app.surveys.validation import InvalidAnswer
 
 
 router = APIRouter(prefix="/api/surveys", tags=["surveys"])
@@ -100,10 +101,26 @@ def shared(share_id: str, user: CurrentUser, service: Service, response: Respons
     return service.shared(share_id)
 
 
+@shared_router.post("/survey/{share_id}/validate", response_model=AnswerChecked)
+def check_answer(
+    share_id: str, data: AnswerCheck, user: CurrentUser, service: Service, response: Response,
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return service.check_answer(share_id, data.question_id, data.value)
+
+
 def register_error_handlers(application) -> None:
     # Domain errors are translated once; MongoDB errors retain the existing
     # application's 503 handler and credential errors retain its 401 behavior.
     from fastapi.responses import JSONResponse
+
+    @application.exception_handler(InvalidAnswer)
+    async def invalid_answer(request: Request, exc: InvalidAnswer):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": {"question_id": exc.question_id, "code": exc.code, "message": str(exc)}},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @application.exception_handler(SurveyNotFound)
     async def not_found(request: Request, exc: SurveyNotFound):

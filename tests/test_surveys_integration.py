@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 import pytest
 from pymongo.errors import WriteError
 
-from app.db import initialize_database
+from app.database.connection import initialize_database
 from app.main import create_app
 
 

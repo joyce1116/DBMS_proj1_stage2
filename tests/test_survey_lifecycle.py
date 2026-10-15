@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 import pytest
 from pymongo.errors import DuplicateKeyError
 
-from app.db import initialize_database
+from app.database.connection import initialize_database
 from app.main import create_app
 
 
@@ -129,7 +129,7 @@ def test_publish_rechecks_deadline_at_transition_without_writing(
     deadline = (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0)
     survey = draft(api, headers, deadline=deadline.isoformat())
     original = stored(database, survey)
-    monkeypatch.setattr("app.survey_service.mongo_utc_now", lambda: deadline + timedelta(milliseconds=after_deadline_ms))
+    monkeypatch.setattr("app.surveys.service.mongo_utc_now", lambda: deadline + timedelta(milliseconds=after_deadline_ms))
     response = transition(api, headers, survey, "publish")
     assert response.status_code == 422, response.text
     assert stored(database, survey) == original
@@ -317,7 +317,7 @@ def test_deadline_boundary_is_computed_without_mutating_or_deleting_survey(
     deadline = (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0)
     survey = published(api, headers, deadline=deadline.isoformat())
     original = snapshot(database)
-    monkeypatch.setattr("app.survey_service.mongo_utc_now", lambda: deadline + timedelta(milliseconds=offset_ms))
+    monkeypatch.setattr("app.surveys.service.mongo_utc_now", lambda: deadline + timedelta(milliseconds=offset_ms))
     detail = api.get(f"/api/surveys/{survey['id']}", headers=headers).json()
     summary = api.get("/api/surveys", headers=headers).json()["items"][0]
     for result in (detail, summary):
@@ -333,7 +333,7 @@ def test_expired_published_survey_can_be_explicitly_closed(api, database, owner,
     _, headers = owner
     deadline = (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0)
     survey = published(api, headers, deadline=deadline.isoformat())
-    monkeypatch.setattr("app.survey_service.mongo_utc_now", lambda: deadline)
+    monkeypatch.setattr("app.surveys.service.mongo_utc_now", lambda: deadline)
     assert api.get(survey["share_url"], headers=headers).status_code == 410
     response = transition(api, headers, survey, "close")
     assert response.status_code == 200, response.text
@@ -402,7 +402,7 @@ def test_share_token_collision_retries_without_mutating_the_existing_share(api, 
     tokens = iter([first["share_id"], "Z" * 32])
     # Only random generation is controlled; MongoDB must actually reject the
     # duplicate token before the service can allocate the second one.
-    monkeypatch.setattr("app.survey_service.secrets.token_urlsafe", lambda length: next(tokens))
+    monkeypatch.setattr("app.surveys.service.secrets.token_urlsafe", lambda length: next(tokens))
     response = transition(api, headers, second, "publish")
     assert response.status_code == 200, response.text
     assert response.json()["share_id"] == "Z" * 32

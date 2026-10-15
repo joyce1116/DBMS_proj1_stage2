@@ -5,9 +5,9 @@ import json
 
 from pymongo.errors import PyMongoError
 
-from app.config import Settings
-from app.db import make_client
-from app.survey_migration import migrate_surveys_v2
+from app.core.config import Settings
+from app.database.connection import make_client
+from app.database.migrations import migrate_surveys_v2
 
 
 def main() -> int:

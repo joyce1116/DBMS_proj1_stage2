@@ -8,8 +8,8 @@ from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.database import Database
 from pymongo.errors import CollectionInvalid
 
-from app.config import Settings
-from app.survey_schema import SURVEY_SCHEMA
+from app.core.config import Settings
+from app.surveys.schema import SURVEY_SCHEMA
 
 
 USER_SCHEMA = {

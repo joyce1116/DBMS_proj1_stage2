@@ -1,8 +1,0 @@
-# Direct dependencies. requirements.txt will pin the verified environment.
-fastapi>=0.115,<1
-uvicorn>=0.32,<1
-pymongo>=4.10,<5
-pydantic-settings>=2.6,<3
-pwdlib[argon2]>=0.2,<1
-pytest>=8.3,<10
-httpx>=0.27,<1

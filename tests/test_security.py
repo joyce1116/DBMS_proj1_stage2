@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 
-from app.security import (
+from app.auth.security import (
     hash_password,
     hash_token,
     new_token,

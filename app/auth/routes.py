@@ -3,9 +3,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.repositories import AccountRepository
-from app.schemas import Credentials, LoginResponse, RegisterRequest, UserPublic
-from app.services import AccountService, InvalidCredentials, UsernameTaken
+from app.auth.repository import AccountRepository
+from app.auth.models import Credentials, LoginResponse, RegisterRequest, UserPublic
+from app.auth.service import AccountService, InvalidCredentials, UsernameTaken
 
 
 router = APIRouter(prefix="/api/auth", tags=["accounts"])

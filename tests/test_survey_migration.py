@@ -8,7 +8,7 @@ from bson import ObjectId
 from pymongo.errors import OperationFailure
 import pytest
 
-from app.survey_migration import (
+from app.database.migrations import (
     CURRENT_VALIDATOR,
     LEGACY_VALIDATOR,
     MIGRATION_ID,

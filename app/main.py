@@ -6,10 +6,10 @@ from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
 from starlette.concurrency import run_in_threadpool
 
-from app.config import Settings
-from app.db import initialize_database, make_client
-from app.routes import router
-from app.survey_routes import router as survey_router, shared_router, register_error_handlers
+from app.core.config import Settings
+from app.database.connection import initialize_database, make_client
+from app.auth.routes import router
+from app.surveys.routes import router as survey_router, shared_router, register_error_handlers
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,8 +29,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             client.close()
 
     application = FastAPI(
-        title="Questionnaire system — survey lifecycle",
-        version="0.3.0",
+        title="Questionnaire system",
+        version="0.4.0",
         lifespan=lifespan,
     )
     application.state.settings = config

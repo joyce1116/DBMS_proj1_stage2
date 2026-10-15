@@ -1,7 +1,7 @@
 """Run from the project root: python -m scripts.init_db."""
 
-from app.config import Settings
-from app.db import initialize_database, make_client
+from app.core.config import Settings
+from app.database.connection import initialize_database, make_client
 
 
 def main() -> None:

@@ -6,7 +6,7 @@ import math
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from app.survey_models import QuestionInput, QuestionOrder, SurveyCreate, SurveyPatch
+from app.surveys.models import QuestionInput, QuestionOrder, SurveyCreate, SurveyPatch
 
 
 QUESTION = TypeAdapter(QuestionInput)

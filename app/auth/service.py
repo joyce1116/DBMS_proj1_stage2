@@ -3,8 +3,9 @@ from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
-from app.repositories import AccountRepository
-from app.security import (
+from app.auth.repository import AccountRepository
+from app.core.time import mongo_utc_now
+from app.auth.security import (
     hash_password, hash_token, new_token, username_key,
     verify_missing_user, verify_password,
 )
@@ -16,12 +17,6 @@ class UsernameTaken(Exception):
 
 class InvalidCredentials(Exception):
     pass
-
-
-def mongo_utc_now() -> datetime:
-    """Use BSON date precision in responses as well as persisted documents."""
-    now = datetime.now(timezone.utc)
-    return now.replace(microsecond=(now.microsecond // 1000) * 1000)
 
 
 def public_user(document: dict) -> dict:
