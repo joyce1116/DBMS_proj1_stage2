@@ -184,7 +184,7 @@ def test_adds_four_question_types_in_order_with_generated_stable_ids(api, databa
         {"type": "single_choice", "title": "Single", "required": True, "options": [{"label": "A"}, {"label": "B"}]},
         {"type": "multiple_choice", "title": "Two", "options": [{"label": "A"}, {"label": "B"}], "min_selections": 2, "max_selections": 2},
         {"type": "text", "title": "Text", "min_length": 1, "max_length": 20},
-        {"type": "number", "title": "Number", "min_value": -3.5, "max_value": 9, "integer_only": True},
+        {"type": "number", "title": "Number", "min_value": -3, "max_value": 9, "integer_only": True},
     ]
     observed_ids = []
     for index, definition in enumerate(definitions, 1):
@@ -203,6 +203,30 @@ def test_adds_four_question_types_in_order_with_generated_stable_ids(api, databa
     assert stored["questions"] == survey["questions"]
     assert survey["questions"][0]["required"] is True
     assert survey["questions"][1]["min_selections"] == survey["questions"][1]["max_selections"] == 2
+
+
+@pytest.mark.parametrize("field,value", [("min_value", 1.2), ("max_value", 9.5)])
+def test_integer_fractional_bounds_are_rejected_on_create_and_replace(api, database, owner, field, value):
+    _, headers = owner
+    survey = create_survey(api, headers)
+    base = f"/api/surveys/{survey['id']}/questions"
+    valid = {"type": "number", "title": "整数题", "integer_only": True, "min_value": 0.0, "max_value": 10.0}
+    invalid = {**valid, field: value}
+    original = database.surveys.find_one()
+    rejected = api.post(base, headers=headers, params={"expected_revision": survey["revision"]}, json=invalid)
+    assert rejected.status_code == 422 and "bounds must be integers" in rejected.text
+    assert database.surveys.find_one() == original
+    survey = add_question(api, headers, survey, valid)
+    original = database.surveys.find_one()
+    assert type(original["questions"][0]["min_value"]) is int
+    question_id = survey["questions"][0]["id"]
+    rejected = api.put(base + "/" + question_id, headers=headers,
+                       params={"expected_revision": survey["revision"]}, json=invalid)
+    assert rejected.status_code == 422
+    assert database.surveys.find_one() == original
+    accepted = api.put(base + "/" + question_id, headers=headers,
+                       params={"expected_revision": survey["revision"]}, json={**invalid, "integer_only": False})
+    assert accepted.status_code == 200 and accepted.json()["questions"][0][field] == value
 
 
 def test_edit_keeps_question_and_reused_option_ids_then_deletes_question(api, owner):

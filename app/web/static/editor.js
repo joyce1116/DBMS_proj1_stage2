@@ -90,7 +90,21 @@ export async function editor(id, isCurrent = () => true) {
     } else if (kind === 'text') {
       config.innerHTML = `<div class="field-row">${numberInput('min_length','最少字数',previous?.min_length ?? 0,{max:10000})}${numberInput('max_length','最多字数',previous?.max_length ?? 1000,{min:1,max:10000,required:true})}</div>`;
     } else {
-      config.innerHTML = `<div class="field-row">${numberInput('min_value','最小值',previous?.min_value,{min:-1e15,max:1e15,step:'any'})}${numberInput('max_value','最大值',previous?.max_value,{min:-1e15,max:1e15,step:'any'})}</div><div class="field check-field"><label class="check-label"><input name="integer_only" type="checkbox" ${previous?.integer_only ? 'checked' : ''}>只允许整数</label></div><p class="form-note">上下限留空表示不限；有效数值范围为 ±10¹⁵。</p>`;
+      config.innerHTML = `<div class="field-row">${numberInput('min_value','最小值',previous?.min_value,{min:-1e15,max:1e15,step:'any'})}${numberInput('max_value','最大值',previous?.max_value,{min:-1e15,max:1e15,step:'any'})}</div><div class="field check-field"><label class="check-label"><input name="integer_only" type="checkbox" ${previous?.integer_only ? 'checked' : ''}>只允许整数</label></div><p class="notice danger" data-number-bound-error role="alert" hidden>只允许整数时，最小值和最大值也必须是整数。</p><p class="form-note">上下限留空表示不限；勾选“只允许整数”后，上下限也须为整数。有效数值范围为 ±10¹⁵。</p>`;
+      function validateBounds() {
+        const integerOnly = $('[name=integer_only]',config).checked;
+        let invalid = false;
+        for (const input of $$('input[type=number]',config)) {
+          input.step = integerOnly ? '1' : 'any';
+          const fractional = integerOnly && input.value !== '' && !Number.isInteger(input.valueAsNumber);
+          input.setCustomValidity(fractional ? '只允许整数时，最小值和最大值也必须是整数。' : '');
+          input.setAttribute('aria-invalid',String(fractional));
+          invalid ||= fractional;
+        }
+        $('[data-number-bound-error]',config).hidden = !invalid;
+      }
+      $$('input',config).forEach(input => input.addEventListener('input',validateBounds));
+      validateBounds();
     }
   }
 

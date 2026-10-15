@@ -377,3 +377,51 @@ def test_late_statistics_response_cannot_replace_login_after_logout(page,live_ur
     page.evaluate("async () => { window.releaseStats(); await new Promise(resolve => setTimeout(resolve,100)); }")
     expect(page.get_by_role("heading",name="欢迎来到工作台",exact=True)).to_be_visible()
     expect(page.locator(".stat-summary")).to_have_count(0)
+
+
+def test_integer_question_bounds_validate_when_typing_and_toggling(page,live_url,database):
+    register(page,live_url)
+    page.get_by_role("button",name="＋ 创建问卷",exact=True).click()
+    modal = page.get_by_role("dialog")
+    modal.get_by_label("问卷标题",exact=True).fill("整数边界回归")
+    modal.get_by_role("button",name="保存",exact=True).click()
+    expect(page.get_by_role("heading",name="整数边界回归",exact=True)).to_be_visible()
+    page.locator('[data-add="number"]').click()
+    modal.get_by_label("题目标题").fill("整数配置")
+    modal.get_by_label("最小值",exact=True).fill("1.2")
+    modal.get_by_label("最大值",exact=True).fill("5.8")
+    modal.get_by_label("只允许整数",exact=True).check()
+    expect(modal.locator("[data-number-bound-error]")).to_contain_text("最小值和最大值也必须是整数")
+    expect(modal.locator("[data-number-bound-error]")).to_be_visible()
+    modal.get_by_role("button",name="保存",exact=True).click()
+    expect(modal).to_be_visible()
+    assert database.surveys.find_one()["questions"] == []
+    modal.get_by_label("最小值",exact=True).fill("1")
+    expect(modal.locator("[data-number-bound-error]")).to_be_visible()
+    modal.get_by_label("最大值",exact=True).fill("5")
+    expect(modal.locator("[data-number-bound-error]")).not_to_be_visible()
+    modal.get_by_role("button",name="保存",exact=True).click()
+    expect(modal).not_to_be_visible()
+    assert database.surveys.find_one()["questions"][0]["integer_only"]
+    page.locator('[data-edit="0"]').click()
+    modal.get_by_label("最大值",exact=True).fill("5.5")
+    expect(modal.locator("[data-number-bound-error]")).to_be_visible()
+    modal.get_by_label("只允许整数",exact=True).uncheck()
+    expect(modal.locator("[data-number-bound-error]")).not_to_be_visible()
+    modal.get_by_role("button",name="保存",exact=True).click()
+    expect(modal).not_to_be_visible()
+    saved = database.surveys.find_one()["questions"][0]
+    assert not saved["integer_only"] and saved["max_value"] == 5.5
+
+
+def test_historical_integer_bounds_still_allow_integer_answers_in_browser(page,live_url,database):
+    name,survey = seed(live_url)
+    database.surveys.update_one({"_id":ObjectId(survey["id"])},
+                                {"$set":{"questions.2.min_value":1.2,"questions.2.max_value":5.8}})
+    login(page,live_url+survey["share_url"],name)
+    short_fill(page,2)
+    page.get_by_role("button",name="确认提交",exact=True).click()
+    expect(page.get_by_role("heading",name="回答已成功提交",exact=True)).to_be_visible()
+    stored = database.submissions.find_one()
+    assert stored["answers"][-1]["value"] == 2
+    assert database.surveys.find_one()["questions"][2]["min_value"] == 1.2

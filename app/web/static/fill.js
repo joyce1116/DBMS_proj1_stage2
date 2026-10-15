@@ -39,15 +39,22 @@ export async function fillSurvey(shareId, isCurrent = () => true) {
     if (!isCurrent()) return;
     const question = survey.questions.find(q => q.id === current);
     const value = editingValue;
+    let minimum = question.min_value, maximum = question.max_value;
+    if (question.type === 'number' && question.integer_only) {
+      // Keep historical fractional-bound surveys fillable without changing the
+      // stored question: HTML step=1 must start at an integral lower bound.
+      if (minimum !== null) minimum = Math.ceil(minimum);
+      if (maximum !== null) maximum = Math.floor(maximum);
+    }
     let input;
     if (question.options) {
       input = `<div class="answer-options">${question.options.map(option => `<label class="answer-option"><input type="${question.type === 'single_choice' ? 'radio' : 'checkbox'}" name="answer" value="${option.id}" ${(Array.isArray(value) ? value.includes(option.id) : value === option.id) ? 'checked' : ''}><span>${escape(option.label)}</span></label>`).join('')}</div>`;
     } else if (question.type === 'text') {
       input = `<div class="field"><label for="answer" class="sr-label">你的回答</label><textarea id="answer" name="answer" placeholder="请填写你的回答">${escape(value ?? '')}</textarea></div>`;
     } else {
-      input = `<div class="field"><label for="answer" class="sr-label">你的回答</label><input id="answer" name="answer" type="number" step="${question.integer_only ? '1' : 'any'}" ${question.min_value !== null ? `min="${question.min_value}"` : ''} ${question.max_value !== null ? `max="${question.max_value}"` : ''} value="${value ?? ''}" placeholder="请输入数字"></div>`;
+      input = `<div class="field"><label for="answer" class="sr-label">你的回答</label><input id="answer" name="answer" type="number" step="${question.integer_only ? '1' : 'any'}" ${minimum !== null ? `min="${minimum}"` : ''} ${maximum !== null ? `max="${maximum}"` : ''} value="${value ?? ''}" placeholder="请输入数字"></div>`;
     }
-    const hint = question.type === 'multiple_choice' ? `请选择 ${Math.max(question.min_selections, Number(question.required))}–${question.max_selections ?? question.options.length} 项` : question.type === 'text' ? `${question.min_length}–${question.max_length} 字` : question.type === 'number' ? `${question.integer_only ? '请输入整数' : '请输入数字'}${question.min_value !== null ? `，最小 ${question.min_value}` : ''}${question.max_value !== null ? `，最大 ${question.max_value}` : ''}` : '请选择一个选项';
+    const hint = question.type === 'multiple_choice' ? `请选择 ${Math.max(question.min_selections, Number(question.required))}–${question.max_selections ?? question.options.length} 项` : question.type === 'text' ? `${question.min_length}–${question.max_length} 字` : question.type === 'number' ? `${question.integer_only ? '请输入整数' : '请输入数字'}${minimum !== null ? `，最小 ${minimum}` : ''}${maximum !== null ? `，最大 ${maximum}` : ''}` : '请选择一个选项';
     $('#main').innerHTML = `<div class="fill-wrap">${heading()}<form id="answer-form" class="surface question-body"><div class="step-label">正在回答第 ${path.length + 1} 道题 · ${types[question.type]}</div><h2>${escape(question.title)}${question.required ? '<span class="required-mark" aria-hidden="true">*</span>' : ''}</h2><p class="form-note">${hint} · ${question.required ? '必答' : '选答，可以留空'}</p>${input}<p data-error class="notice danger" role="alert" tabindex="-1" hidden></p><div class="fill-actions"><button class="button secondary" type="button" id="back-question" ${path.length ? '' : 'disabled'}>← 上一题</button><button class="button" type="submit">下一步 →</button></div></form><p class="auth-footer">回答会在最后确认提交后保存。请勿在填写过程中刷新页面。</p></div>`;
     $('#answer-form').onsubmit = event => {
       event.preventDefault();

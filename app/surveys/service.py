@@ -12,7 +12,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.time import mongo_utc_now
 from app.surveys.repository import SurveyRepository
-from app.surveys.models import QuestionPublic
+from app.surveys.models import QuestionPublic, parse_question
 from app.surveys.validation import validate_answer
 from app.surveys.logic import validate_rule_set
 
@@ -210,6 +210,8 @@ class SurveyService:
             raise InvalidSurveyChange("Deadline must be in the future when publishing")
         try:
             TypeAdapter(list[QuestionPublic]).validate_python(document["questions"])
+            for question in document["questions"]:
+                parse_question({key: value for key, value in question.items() if key != "id"})
         except ValidationError:
             raise InvalidSurveyChange("Question configuration is invalid; repair the draft first") from None
         question_ids = [question["id"] for question in document["questions"]]

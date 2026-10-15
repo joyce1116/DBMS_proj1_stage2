@@ -66,6 +66,30 @@ def test_number_bounds_require_finite_supported_numbers(value):
             QUESTION.validate_python({"type": "number", "title": "Amount", name: value})
 
 
+@pytest.mark.parametrize("bounds", [
+    {"min_value": 1.2, "max_value": 5.8}, {"min_value": -0.5},
+    {"max_value": 4.5}, {"min_value": -5, "max_value": -1.2},
+])
+def test_integer_questions_reject_fractional_configuration_bounds(bounds):
+    with pytest.raises(ValidationError, match="bounds must be integers"):
+        QUESTION.validate_python({"type": "number", "title": "Integer", "integer_only": True, **bounds})
+
+
+@pytest.mark.parametrize("bounds", [
+    {}, {"min_value": 0}, {"max_value": -1},
+    {"min_value": -5, "max_value": 0}, {"min_value": 1.0, "max_value": 5.0},
+])
+def test_integer_questions_allow_empty_and_integral_bounds(bounds):
+    question = QUESTION.validate_python({"type": "number", "title": "Integer", "integer_only": True, **bounds})
+    for name in bounds:
+        assert type(getattr(question, name)) is int
+
+
+def test_decimal_questions_still_allow_fractional_bounds():
+    question = QUESTION.validate_python({"type": "number", "title": "Decimal", "min_value": 1.2, "max_value": 5.8})
+    assert question.min_value == 1.2 and question.max_value == 5.8
+
+
 def test_survey_configuration_normalizes_title_and_preserves_deadline_instant():
     future = datetime.now(timezone(timedelta(hours=8))) + timedelta(days=2)
     survey = SurveyCreate.model_validate({"title": "  Customer feedback  ", "deadline": future.isoformat()})

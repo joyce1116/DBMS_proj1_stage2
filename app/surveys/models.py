@@ -112,7 +112,7 @@ class TextQuestionInput(QuestionBase):
         return self
 
 
-class NumberQuestionInput(QuestionBase):
+class NumberQuestionBase(QuestionBase):
     type: Literal["number"]
     min_value: NumericBound | None = None
     max_value: NumericBound | None = None
@@ -125,6 +125,19 @@ class NumberQuestionInput(QuestionBase):
                 raise ValueError("Minimum numeric value cannot exceed maximum numeric value")
             if self.integer_only and ceil(self.min_value) > floor(self.max_value):
                 raise ValueError("The numeric interval must contain at least one integer")
+        return self
+
+
+class NumberQuestionInput(NumberQuestionBase):
+    @model_validator(mode="after")
+    def validate_integer_bounds(self):
+        if self.integer_only:
+            for name in ("min_value", "max_value"):
+                value = getattr(self, name)
+                if value is not None:
+                    if isinstance(value, float) and not value.is_integer():
+                        raise ValueError("Integer question bounds must be integers")
+                    setattr(self, name, int(value))
         return self
 
 
@@ -148,7 +161,9 @@ class TextQuestionPublic(TextQuestionInput):
     id: QuestionId
 
 
-class NumberQuestionPublic(NumberQuestionInput):
+class NumberQuestionPublic(NumberQuestionBase):
+    # Historical surveys allowed fractional bounds on integer answers. Keep
+    # those records readable; configuration writes and publication are stricter.
     id: QuestionId
 
 

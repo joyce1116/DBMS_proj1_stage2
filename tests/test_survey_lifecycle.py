@@ -74,6 +74,45 @@ def snapshot(database):
     }
 
 
+@pytest.mark.parametrize("already_published", [False, True])
+def test_historical_fractional_integer_bounds_remain_readable(api, database, owner, already_published):
+    _, headers = owner
+    survey = draft(api, headers, with_question=False)
+    base = f"/api/surveys/{survey['id']}"
+    valid = {"type": "number", "title": "旧整数题", "required": True,
+             "integer_only": True, "min_value": 1, "max_value": 5}
+    response = api.post(base + "/questions", headers=headers,
+                        params={"expected_revision": survey["revision"]}, json=valid)
+    assert response.status_code == 201
+    survey = response.json()
+    if already_published:
+        response = transition(api, headers, survey, "publish")
+        assert response.status_code == 200
+        survey = response.json()
+    # Model an accepted historical document without rewriting real user data.
+    database.surveys.update_one({"_id": ObjectId(survey["id"])},
+                                {"$set": {"questions.0.min_value": 1.2, "questions.0.max_value": 5.8}})
+    original = stored(database, survey)
+    detail = api.get(base, headers=headers)
+    assert detail.status_code == 200 and detail.json()["questions"][0]["min_value"] == 1.2
+    qid = survey["questions"][0]["id"]
+    if already_published:
+        assert api.get(survey["share_url"], headers=headers).status_code == 200
+        checked = api.post(survey["share_url"] + "/validate", headers=headers,
+                           json={"question_id": qid, "value": 2})
+        assert checked.status_code == 200
+        assert api.post(survey["share_url"] + "/validate", headers=headers,
+                         json={"question_id": qid, "value": 2.5}).status_code == 422
+        assert stored(database, survey) == original
+    else:
+        assert transition(api, headers, survey, "publish").status_code == 422
+        assert stored(database, survey) == original
+        repaired = api.put(base + "/questions/" + qid, headers=headers,
+                            params={"expected_revision": survey["revision"]}, json=valid)
+        assert repaired.status_code == 200 and repaired.json()["questions"][0]["id"] == qid
+        assert transition(api, headers, repaired.json(), "publish").status_code == 200
+
+
 def test_draft_has_no_share_and_owner_summary_exposes_availability(api, database, owner):
     _, headers = owner
     survey = draft(api, headers)

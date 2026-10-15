@@ -34,6 +34,8 @@ const messages = {
   'Minimum text length cannot exceed maximum text length':'最少字数不能大于最多字数。',
   'Minimum numeric value cannot exceed maximum numeric value':'最小值不能大于最大值。',
   'The numeric interval must contain at least one integer':'这个范围内没有整数，请调整上下限。',
+  'Integer question bounds must be integers':'只允许整数时，最小值和最大值也必须是整数。',
+  'Question configuration is invalid; repair the draft first':'题目配置不符合要求，请检查整数题上下限等设置，修正后再发布。',
 };
 
 export class APIError extends Error {
