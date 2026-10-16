@@ -5,3 +5,13 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 backups/
+
+# Local documentation and report files.
+/docs/
+/figures/
+/report.*
+/report/
+
+# Word lock and temporary files.
+/~$*
+/~WRL*.tmp
