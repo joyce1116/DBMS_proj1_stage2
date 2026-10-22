@@ -1,6 +1,7 @@
 """Reuse phase-one question validation while preserving every saved version."""
 
 from copy import deepcopy
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from bson import ObjectId
@@ -10,6 +11,9 @@ from pymongo.errors import DuplicateKeyError
 from app.core.time import mongo_utc_now
 from app.questions.repository import QuestionRepository
 from app.surveys.models import parse_question
+
+if TYPE_CHECKING:
+    from app.questions.access import QuestionAccessService
 
 
 class QuestionNotFound(Exception):
@@ -41,8 +45,11 @@ class QuestionService:
     MAX_VERSION = 2147483647
     ALLOCATION_ATTEMPTS = 8
 
-    def __init__(self, repository: QuestionRepository):
+    def __init__(
+        self, repository: QuestionRepository, access: "QuestionAccessService | None" = None,
+    ):
         self.repository = repository
+        self.access = access
 
     @staticmethod
     def _prepare_content(data: dict, parent: dict | None = None) -> dict:
@@ -85,7 +92,9 @@ class QuestionService:
         return question_version_public(self.repository.create(document))
 
     def detail(self, version_id: str, owner_id: str) -> dict:
-        return question_version_public(self._owned(version_id, owner_id))
+        document = (self.access.readable_version(version_id, owner_id)
+                    if self.access is not None else self._owned(version_id, owner_id))
+        return question_version_public(document)
 
     @staticmethod
     def _page(documents: list[dict], total: int, offset: int, limit: int) -> dict:

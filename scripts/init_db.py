@@ -10,7 +10,8 @@ def main() -> None:
         client.admin.command("ping")
         initialize_database(client[settings.mongo_db])
         print(f"MongoDB initialized: {settings.mongo_db} "
-              "(users, sessions, surveys v4, submissions, question_versions)")
+              "(users, sessions, surveys v4, submissions, question_versions, "
+              "question_banks, question_bank_entries, question_grants)")
 
 
 if __name__ == "__main__":

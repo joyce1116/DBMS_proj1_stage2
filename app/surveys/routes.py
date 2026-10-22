@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.auth.routes import CurrentUser
+from app.questions.access import QuestionAccessService
 from app.questions.repository import QuestionRepository
 from app.questions.service import QuestionService
 from app.surveys.models import (
@@ -23,7 +24,9 @@ shared_router = APIRouter(tags=["shared surveys"])
 
 def get_survey_service(request: Request) -> SurveyService:
     db = request.app.state.db
-    return SurveyService(SurveyRepository(db), QuestionService(QuestionRepository(db)))
+    return SurveyService(
+        SurveyRepository(db), QuestionService(QuestionRepository(db), QuestionAccessService(db))
+    )
 
 
 Service = Annotated[SurveyService, Depends(get_survey_service)]

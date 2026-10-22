@@ -12,6 +12,8 @@ from app.core.config import Settings
 from app.surveys.schema import SURVEY_SCHEMA
 from app.responses.schema import SUBMISSION_SCHEMA
 from app.questions.schema import QUESTION_VERSION_SCHEMA
+from app.questions.access_schema import QUESTION_GRANT_SCHEMA
+from app.banks.schema import BANK_SCHEMA, BANK_ENTRY_SCHEMA
 
 
 USER_SCHEMA = {
@@ -68,6 +70,9 @@ def initialize_database(db: Database) -> None:
         ("users", USER_SCHEMA), ("sessions", SESSION_SCHEMA), ("surveys", SURVEY_SCHEMA),
         ("submissions", SUBMISSION_SCHEMA),
         ("question_versions", QUESTION_VERSION_SCHEMA),
+        ("question_banks", BANK_SCHEMA),
+        ("question_bank_entries", BANK_ENTRY_SCHEMA),
+        ("question_grants", QUESTION_GRANT_SCHEMA),
     ):
         try:
             db.create_collection(
@@ -132,3 +137,36 @@ def initialize_database(db: Database) -> None:
         [("owner_id", ASCENDING), ("created_at", DESCENDING), ("_id", DESCENDING)],
         name="ix_question_versions_owner_created",
     )
+    db.question_banks.create_index(
+        [("owner_id", ASCENDING), ("archived", ASCENDING),
+         ("created_at", DESCENDING), ("_id", DESCENDING)],
+        name="ix_question_banks_owner_active_created",
+    )
+    db.question_bank_entries.create_index(
+        [("bank_id", ASCENDING), ("family_id", ASCENDING)],
+        unique=True, name="uq_question_bank_entries_family",
+    )
+    db.question_bank_entries.create_index(
+        [("bank_id", ASCENDING), ("created_at", DESCENDING), ("_id", DESCENDING)],
+        name="ix_question_bank_entries_created",
+    )
+    db.question_bank_entries.create_index(
+        [("version_id", ASCENDING), ("bank_id", ASCENDING)],
+        name="ix_question_bank_entries_version",
+    )
+    db.question_grants.create_index(
+        [("resource_type", ASCENDING), ("resource_id", ASCENDING), ("grantee_id", ASCENDING)],
+        unique=True, name="uq_question_grants_resource_grantee",
+    )
+    db.question_grants.create_index(
+        [("grantee_id", ASCENDING), ("resource_type", ASCENDING),
+         ("created_at", DESCENDING), ("_id", DESCENDING)],
+        name="ix_question_grants_grantee_created",
+    )
+    for field, name in (
+        ("question_sources.version_id", "ix_surveys_source_version"),
+        ("question_sources.family_id", "ix_surveys_source_family"),
+    ):
+        db.surveys.create_index(
+            [(field, ASCENDING), ("created_at", DESCENDING), ("_id", DESCENDING)], name=name,
+        )

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.auth.routes import CurrentUser
+from app.questions.access import QuestionAccessService
 from app.questions.models import QuestionVersion, QuestionVersionList
 from app.questions.repository import QuestionRepository
 from app.questions.service import (
@@ -18,7 +19,8 @@ router = APIRouter(prefix="/api/questions", tags=["questions"])
 
 
 def get_question_service(request: Request) -> QuestionService:
-    return QuestionService(QuestionRepository(request.app.state.db))
+    db = request.app.state.db
+    return QuestionService(QuestionRepository(db), QuestionAccessService(db))
 
 
 Service = Annotated[QuestionService, Depends(get_question_service)]
