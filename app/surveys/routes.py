@@ -3,8 +3,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.auth.routes import CurrentUser
+from app.questions.repository import QuestionRepository
+from app.questions.service import QuestionService
 from app.surveys.models import (
-    AnswerCheck, AnswerChecked, QuestionInput, QuestionOrder, SharedSurvey, SurveyCreate, SurveyDetail, SurveyList,
+    AnswerCheck, AnswerChecked, QuestionInput, QuestionOrder, QuestionSelection, SharedSurvey, SurveyCreate, SurveyDetail, SurveyList,
     SurveyPatch, SurveyTransition, RulesPatch,
 )
 from app.surveys.repository import SurveyRepository
@@ -20,7 +22,8 @@ shared_router = APIRouter(tags=["shared surveys"])
 
 
 def get_survey_service(request: Request) -> SurveyService:
-    return SurveyService(SurveyRepository(request.app.state.db))
+    db = request.app.state.db
+    return SurveyService(SurveyRepository(db), QuestionService(QuestionRepository(db)))
 
 
 Service = Annotated[SurveyService, Depends(get_survey_service)]
@@ -67,6 +70,26 @@ def replace_question(
 ) -> dict:
     return service.replace_question(
         survey_id, user["id"], question_id, expected_revision, data.model_dump()
+    )
+
+
+@router.post("/{survey_id}/question-selections", status_code=201, response_model=SurveyDetail)
+def add_question_selection(
+    survey_id: str, data: QuestionSelection, expected_revision: Revision,
+    user: CurrentUser, service: Service, response: Response,
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return service.add_question_selection(survey_id, user["id"], expected_revision, data.version_id)
+
+
+@router.put("/{survey_id}/question-selections/{question_id}", response_model=SurveyDetail)
+def replace_question_selection(
+    survey_id: str, question_id: str, data: QuestionSelection, expected_revision: Revision,
+    user: CurrentUser, service: Service, response: Response,
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return service.replace_question_selection(
+        survey_id, user["id"], question_id, expected_revision, data.version_id
     )
 
 

@@ -1,4 +1,4 @@
-"""MongoDB validation and indexes for the phase-one backend.
+"""MongoDB validation and indexes for the incremental questionnaire backend.
 
 Existing collections and documents are preserved. Future schema changes belong
 in explicit migrations; startup does not silently replace an existing validator.
@@ -11,6 +11,7 @@ from pymongo.errors import CollectionInvalid
 from app.core.config import Settings
 from app.surveys.schema import SURVEY_SCHEMA
 from app.responses.schema import SUBMISSION_SCHEMA
+from app.questions.schema import QUESTION_VERSION_SCHEMA
 
 
 USER_SCHEMA = {
@@ -66,6 +67,7 @@ def initialize_database(db: Database) -> None:
     for name, schema in (
         ("users", USER_SCHEMA), ("sessions", SESSION_SCHEMA), ("surveys", SURVEY_SCHEMA),
         ("submissions", SUBMISSION_SCHEMA),
+        ("question_versions", QUESTION_VERSION_SCHEMA),
     ):
         try:
             db.create_collection(
@@ -86,7 +88,9 @@ def initialize_database(db: Database) -> None:
                 raise RuntimeError(
                     f"Collection {name!r} has a different schema. "
                     "Back up the data and apply an explicit migration. "
-                    + ("For surveys: migrate_surveys_v2 (v1 only), then migrate_surveys_v3." if name == "surveys" else "")
+                    + ("For surveys: migrate_surveys_v2 (v1 only), then "
+                       "migrate_surveys_v3 (v2 only), then migrate_surveys_v4 (v3 only)."
+                       if name == "surveys" else "")
                 ) from None
 
     db.users.create_index(
@@ -119,4 +123,12 @@ def initialize_database(db: Database) -> None:
     db.submissions.create_index(
         [("survey_id", ASCENDING), ("submitted_at", DESCENDING), ("_id", DESCENDING)],
         name="ix_submissions_survey_time",
+    )
+    db.question_versions.create_index(
+        [("family_id", ASCENDING), ("version", ASCENDING)],
+        unique=True, name="uq_question_versions_family_version",
+    )
+    db.question_versions.create_index(
+        [("owner_id", ASCENDING), ("created_at", DESCENDING), ("_id", DESCENDING)],
+        name="ix_question_versions_owner_created",
     )

@@ -121,8 +121,10 @@ def test_draft_has_no_share_and_owner_summary_exposes_availability(api, database
     assert survey["availability"] == "draft" and survey["is_open"] is False
     summary = api.get("/api/surveys", headers=headers).json()["items"][0]
     assert "questions" not in summary
-    assert summary == {key: value for key, value in survey.items() if key not in ("questions", "jump_rules")}
-    assert stored(database, survey)["schema_version"] == 3
+    assert summary == {key: value for key, value in survey.items()
+                       if key not in ("questions", "jump_rules", "question_sources")}
+    assert stored(database, survey)["schema_version"] == 4
+    assert stored(database, survey)["question_sources"] == []
     assert api.get("/survey/" + "a" * 32, headers=headers).status_code == 404
 
 
@@ -148,7 +150,8 @@ def test_publish_preserves_draft_content_and_records_utc_millisecond_dates(api, 
     assert after["published_at"].microsecond % 1000 == 0
     assert api.get(f"/api/surveys/{survey['id']}", headers=headers).json() == opened
     summary = api.get("/api/surveys", headers=headers).json()["items"][0]
-    assert summary == {key: value for key, value in opened.items() if key not in ("questions", "jump_rules")}
+    assert summary == {key: value for key, value in opened.items()
+                       if key not in ("questions", "jump_rules", "question_sources")}
 
 
 def test_empty_survey_cannot_publish_and_is_unchanged(api, database, owner):

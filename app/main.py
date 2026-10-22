@@ -11,6 +11,7 @@ from app.database.connection import initialize_database, make_client
 from app.auth.routes import router
 from app.surveys.routes import router as survey_router, shared_router, register_error_handlers
 from app.responses.routes import router as response_router, register_error_handlers as response_errors
+from app.questions.routes import router as question_router, register_error_handlers as question_errors
 from app.web.routes import install_web
 
 
@@ -40,8 +41,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(survey_router)
     application.include_router(shared_router)
     application.include_router(response_router)
+    application.include_router(question_router)
     register_error_handlers(application)
     response_errors(application)
+    question_errors(application)
     install_web(application)
 
     @application.exception_handler(RequestValidationError)

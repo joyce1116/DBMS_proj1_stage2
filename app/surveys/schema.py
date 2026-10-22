@@ -1,4 +1,4 @@
-"""MongoDB 6-compatible historical schemas and current v3 rules/submission gate.
+"""MongoDB 6-compatible historical schemas and current v4 question provenance.
 
 Cross-field constraints (ranges, Unicode option uniqueness and stable ID
 ownership) are also enforced by application validation and draft editing logic.
@@ -157,4 +157,37 @@ SURVEY_SCHEMA["properties"].update({
     "jump_rules": {"bsonType": "array", "maxItems": 200, "items": {"oneOf": _RULE_SCHEMAS}},
     "submission_serial": {"bsonType": ["int", "long"], "minimum": 0},
     "last_submission_at": {"bsonType": ["date", "null"]},
+})
+
+# Freeze the phase-one rules/submission shape for the v2 -> v3 migration.
+# Existing question IDs, option IDs, rules and stored answers keep their shape.
+SURVEY_SCHEMA_V3 = deepcopy(SURVEY_SCHEMA)
+
+_OPTION_SOURCE_PROPERTIES = {
+    "local_id": deepcopy(_OPTION_SCHEMA["properties"]["id"]),
+    "source_id": deepcopy(_OPTION_SCHEMA["properties"]["id"]),
+}
+_QUESTION_SOURCE_PROPERTIES = {
+    "question_id": deepcopy(_QUESTION_PROPERTIES["id"]),
+    "family_id": {"bsonType": "objectId"},
+    "version_id": {"bsonType": "objectId"},
+    "version": {"bsonType": "int", "minimum": 1, "maximum": 2147483647},
+    "option_map": {
+        "bsonType": "array", "maxItems": 50, "uniqueItems": True,
+        "items": {
+            "bsonType": "object", "required": list(_OPTION_SOURCE_PROPERTIES),
+            "additionalProperties": False, "properties": _OPTION_SOURCE_PROPERTIES,
+        },
+    },
+}
+SURVEY_SCHEMA["required"] += ["question_sources"]
+SURVEY_SCHEMA["properties"].update({
+    "schema_version": {"bsonType": "int", "enum": [4]},
+    "question_sources": {
+        "bsonType": "array", "maxItems": 100, "uniqueItems": True,
+        "items": {
+            "bsonType": "object", "required": list(_QUESTION_SOURCE_PROPERTIES),
+            "additionalProperties": False, "properties": _QUESTION_SOURCE_PROPERTIES,
+        },
+    },
 })

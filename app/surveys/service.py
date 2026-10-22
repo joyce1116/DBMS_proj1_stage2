@@ -11,8 +11,10 @@ from pydantic import TypeAdapter, ValidationError
 from pymongo.errors import DuplicateKeyError
 
 from app.core.time import mongo_utc_now
+from app.questions.service import QuestionService
 from app.surveys.repository import SurveyRepository
 from app.surveys.models import QuestionPublic, parse_question
+from app.surveys.selection import public_sources, selected_question, validate_sources
 from app.surveys.validation import validate_answer
 from app.surveys.logic import validate_rule_set
 
@@ -76,12 +78,14 @@ def survey_public(document: dict, *, include_questions: bool = True) -> dict:
     if include_questions:
         public["questions"] = document["questions"]
         public["jump_rules"] = document["jump_rules"]
+        public["question_sources"] = public_sources(document.get("question_sources", []))
     return public
 
 
 class SurveyService:
-    def __init__(self, repository: SurveyRepository):
+    def __init__(self, repository: SurveyRepository, question_service: QuestionService | None = None):
         self.repository = repository
+        self.question_service = question_service
 
     def create(self, owner_id: str, data: dict) -> dict:
         now = mongo_utc_now()
@@ -92,12 +96,13 @@ class SurveyService:
             "deadline": bson_datetime(data["deadline"]),
             "status": "draft",
             "revision": 1,
-            "schema_version": 3,
+            "schema_version": 4,
             "share_id": None,
             "published_at": None,
             "closed_at": None,
             "questions": [],
             "jump_rules": [],
+            "question_sources": [],
             "submission_serial": 0,
             "last_submission_at": None,
             "created_at": now,
@@ -133,8 +138,13 @@ class SurveyService:
         return document
 
     def _save(self, document: dict, changes: dict) -> dict:
-        validate_rule_set(changes.get("questions", document["questions"]),
-                          changes.get("jump_rules", document["jump_rules"]))
+        questions = changes.get("questions", document["questions"])
+        sources = changes.get("question_sources", document.get("question_sources", []))
+        self._validate_sources(questions, sources)
+        validate_rule_set(questions, changes.get("jump_rules", document["jump_rules"]))
+        if "questions" in changes or "question_sources" in changes:
+            # A snapshot and its provenance must pass the same revision CAS.
+            changes = {**changes, "questions": questions, "question_sources": sources}
         changes = {**changes, "updated_at": mongo_utc_now()}
         result = self.repository.update_draft(
             document["_id"], document["owner_id"], document["revision"], changes
@@ -142,6 +152,58 @@ class SurveyService:
         if result is None:
             raise RevisionConflict
         return survey_public(result)
+
+    @staticmethod
+    def _validate_sources(questions: list[dict], sources: list[dict]) -> None:
+        try:
+            validate_sources(questions, sources)
+        except ValueError as exc:
+            raise InvalidSurveyChange(str(exc)) from None
+
+    def _selected_question(
+        self, version_id: str, owner_id: str, previous: dict | None = None,
+        previous_source: dict | None = None,
+    ) -> tuple[dict, dict]:
+        if self.question_service is None:
+            raise InvalidSurveyChange("Question selection service is not configured")
+        version = self.question_service.detail(version_id, owner_id)
+        try:
+            return selected_question(version, self._prepare_question, previous, previous_source)
+        except (ValidationError, ValueError) as exc:
+            raise InvalidSurveyChange("Saved question configuration is invalid") from exc
+
+    def add_question_selection(
+        self, survey_id: str, owner_id: str, revision: int, version_id: str,
+    ) -> dict:
+        document = self._editable(survey_id, owner_id, revision)
+        if len(document["questions"]) >= 100:
+            raise InvalidSurveyChange("A survey can contain at most 100 questions")
+        question, source = self._selected_question(version_id, owner_id)
+        return self._save(document, {
+            "questions": [*document["questions"], question],
+            "question_sources": [*document.get("question_sources", []), source],
+        })
+
+    def replace_question_selection(
+        self, survey_id: str, owner_id: str, question_id: str, revision: int, version_id: str,
+    ) -> dict:
+        document = self._editable(survey_id, owner_id, revision)
+        for position, previous in enumerate(document["questions"]):
+            if previous["id"] == question_id:
+                sources = document.get("question_sources", [])
+                previous_source = next(
+                    (source for source in sources if source["question_id"] == question_id), None
+                )
+                question, source = self._selected_question(version_id, owner_id, previous, previous_source)
+                questions = deepcopy(document["questions"])
+                questions[position] = question
+                return self._save(document, {
+                    "questions": questions,
+                    "question_sources": [
+                        *[entry for entry in sources if entry["question_id"] != question_id], source
+                    ],
+                })
+        raise SurveyNotFound
 
     def set_rules(self, survey_id: str, owner_id: str, revision: int, rules: list[dict]) -> dict:
         document = self._editable(survey_id, owner_id, revision)
@@ -180,7 +242,12 @@ class SurveyService:
             if previous["id"] == question_id:
                 questions = deepcopy(document["questions"])
                 questions[position] = self._prepare_question(data, previous)
-                return self._save(document, {"questions": questions})
+                sources = document.get("question_sources", [])
+                if questions[position] != previous:
+                    # A direct local edit severs provenance; the immutable
+                    # library version and every other survey stay untouched.
+                    sources = [source for source in sources if source["question_id"] != question_id]
+                return self._save(document, {"questions": questions, "question_sources": sources})
         raise SurveyNotFound
 
     def delete_question(
@@ -190,7 +257,9 @@ class SurveyService:
         questions = [question for question in document["questions"] if question["id"] != question_id]
         if len(questions) == len(document["questions"]):
             raise SurveyNotFound
-        return self._save(document, {"questions": questions})
+        sources = [source for source in document.get("question_sources", [])
+                   if source["question_id"] != question_id]
+        return self._save(document, {"questions": questions, "question_sources": sources})
 
     def reorder_questions(
         self, survey_id: str, owner_id: str, revision: int, question_ids: list[str]
@@ -218,6 +287,7 @@ class SurveyService:
         option_ids = [option["id"] for question in document["questions"] for option in question.get("options", [])]
         if len(set(question_ids)) != len(question_ids) or len(set(option_ids)) != len(option_ids):
             raise InvalidSurveyChange("Question and option IDs must be unique before publishing")
+        self._validate_sources(document["questions"], document.get("question_sources", []))
         validate_rule_set(document["questions"], document["jump_rules"])
         for attempt in range(3):
             try:

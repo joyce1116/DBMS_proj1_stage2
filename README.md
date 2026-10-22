@@ -10,6 +10,7 @@
 - 发布分享链接，设置截止时间或手动关闭问卷；填写者登录后逐题作答。
 - 校验答案、回退修改、确认提交，支持匿名、允许重复填写的设置、并发提交和网络重试确认。
 - 查看整卷及单题统计，包括选项次数、填写内容、数字均值和答卷明细。
+- 第二阶段已增加后端API：个人题目的版本保存、历史与恢复，以及在问卷草稿中选用/替换具体版本。每份问卷保留独立快照；这些新增操作目前可通过 `/docs` 调试。
 
 ## 运行环境
 
@@ -44,7 +45,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_mongo.ps1
 
 脚本监听 `127.0.0.1:27018`，数据保存在 `.runtime/mongo-data`。保持此终端运行。
 
-### 3. 终端 B：初始化数据库并启动应用
+### 3. 终端 B：升级旧库、初始化并启动应用
+
+当前问卷Schema为v4。**已有第一阶段或第二阶段第①部分的v3数据库**，须先停止应用、保持MongoDB运行，再执行以下显式迁移；新空库跳过迁移：
+
+```powershell
+.\.venv\Scripts\python.exe -B -X utf8 -m scripts.migrate_surveys_v4 --dry-run
+.\.venv\Scripts\python.exe -B -X utf8 -m scripts.migrate_surveys_v4
+```
+
+迁移先保存原文备份与审计，仅补空的题目来源数组并更新结构版本；原问卷、题目、答卷、业务版本和时间保留。旧v1须依次v2→v3→v4，旧v2须v3→v4；不要对已升级库重跑更早版本的脚本。已经是v4时无需再次迁移。
 
 ```powershell
 .\.venv\Scripts\python.exe -B -m scripts.init_db
@@ -119,7 +129,7 @@ $env:PLAYWRIGHT_CHANNEL = 'chromium'
 
 常规及浏览器测试均不需要先启动终端 B。测试数据库连接使用 `TEST_MONGODB_URI`，默认也是 `mongodb://127.0.0.1:27018`；使用其他地址时，在运行测试的终端设置该环境变量。
 
-最近一次完整功能回归：286 项常规测试、11 项浏览器测试通过，共 297 项。
+最近一次完整功能回归：376 项常规测试、11 项浏览器测试通过，共 387 项；包含新增题目版本、问卷选题和v4迁移测试。
 
 ## HTTP 演示
 
@@ -152,6 +162,7 @@ app/
   auth/            注册、登录、密码与会话
   surveys/         问卷、题目、跳转、答案校验与发布状态
   responses/       提交、答卷查询与统计
+  questions/       独立题目、不可变版本、历史与恢复
   database/        MongoDB 连接、文档约束与索引
   core/            环境配置与时间处理
   web/             网页入口和静态资源
@@ -192,8 +203,9 @@ pytest.ini         测试配置
 | --- | --- |
 | `users` | 用户名、密码哈希和注册时间 |
 | `sessions` | 所属账号、登录凭据摘要和有效期 |
-| `surveys` | 创建者、标题、填写设置、状态、编辑版本，以及内嵌的题目、选项和跳转规则 |
+| `surveys` | 创建者、标题、填写设置、状态、编辑版本、内嵌题目/选项/跳转，以及选题版本来源和选项映射 |
 | `submissions` | 所属问卷、填写账号、匿名选择、请求标识、提交时间、实际路径和答案 |
+| `question_versions` | 独立题目的版本家族、父版本、完整配置、所有者及创建/派生/恢复操作 |
 
 会话关联账号，问卷关联创建者，答卷关联问卷和填写者。题目与选项使用固定编号，规则和答案通过这些编号找到对应内容。
 
@@ -219,6 +231,9 @@ MongoDB 的嵌套文档和数组适合表达多种题型及答案。文档校验
 | `POST /survey/{share_id}/responses` | 提交问卷版本、请求标识、匿名选择和完整答案，取得回执 |
 | `GET /api/surveys/{id}/responses` | 创建者分页读取答卷 |
 | `GET /api/surveys/{id}/statistics`；`GET /api/surveys/{id}/statistics/{qid}` | 查看整卷统计或单题统计与填空内容 |
+| `GET/POST /api/questions`；`GET /api/questions/{version_id}` | 创建个人题目版本、列出本人所有版本或读取具体版本 |
+| `GET /api/questions/{version_id}/history`；`POST .../versions`；`POST .../restore` | 读取版本历史、派生或恢复为新的版本 |
+| `POST /api/surveys/{id}/question-selections`；`PUT .../question-selections/{qid}` | body提供version_id，query提供expected_revision，添加或显式替换草稿选题 |
 
 常见错误状态：401 未登录，404 资源不存在或无管理权限，409 版本或重复冲突，410 问卷关闭或截止，422 配置或答案错误，503 数据库不可用。
 

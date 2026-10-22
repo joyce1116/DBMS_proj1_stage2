@@ -13,7 +13,9 @@ from uuid import uuid4
 
 from pymongo.database import Database
 
-from app.surveys.schema import LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA_V2, SURVEY_SCHEMA
+from app.surveys.schema import (
+    LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA_V2, SURVEY_SCHEMA_V3, SURVEY_SCHEMA,
+)
 
 
 MIGRATION_ID = "surveys_v1_to_v2"
@@ -44,8 +46,10 @@ class MigrationPlan:
 
 V2_PLAN = MigrationPlan(1, 2, LEGACY_VALIDATOR, CURRENT_VALIDATOR,
                         {"share_id": None, "published_at": None, "closed_at": None})
-V3_PLAN = MigrationPlan(2, 3, CURRENT_VALIDATOR, {"$jsonSchema": SURVEY_SCHEMA},
+V3_PLAN = MigrationPlan(2, 3, CURRENT_VALIDATOR, {"$jsonSchema": SURVEY_SCHEMA_V3},
                         {"jump_rules": [], "submission_serial": 0, "last_submission_at": None})
+V4_PLAN = MigrationPlan(3, 4, {"$jsonSchema": SURVEY_SCHEMA_V3},
+                        {"$jsonSchema": SURVEY_SCHEMA}, {"question_sources": []})
 
 
 def _validate_record(record: dict, plan: MigrationPlan) -> None:
@@ -251,3 +255,7 @@ def migrate_surveys_v2(db: Database, *, dry_run: bool = False) -> dict:
 
 def migrate_surveys_v3(db: Database, *, dry_run: bool = False) -> dict:
     return _migrate(db, V3_PLAN, dry_run=dry_run)
+
+
+def migrate_surveys_v4(db: Database, *, dry_run: bool = False) -> dict:
+    return _migrate(db, V4_PLAN, dry_run=dry_run)

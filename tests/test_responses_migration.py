@@ -10,9 +10,9 @@ from pymongo.errors import OperationFailure, WriteError
 import pytest
 
 from app.database.connection import initialize_database
-from app.database.migrations import migrate_surveys_v2, migrate_surveys_v3, V3_PLAN
+from app.database.migrations import migrate_surveys_v2, migrate_surveys_v3, migrate_surveys_v4, V3_PLAN
 from app.main import create_app
-from app.surveys.schema import LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA_V2, SURVEY_SCHEMA
+from app.surveys.schema import LEGACY_SURVEY_SCHEMA, SURVEY_SCHEMA_V2, SURVEY_SCHEMA_V3
 
 
 pytestmark = pytest.mark.integration
@@ -52,7 +52,7 @@ def test_v3_preflight_migration_preserves_all_lifecycle_states_and_reruns(databa
     assert list(database.surveys.find()) == docs
     result = migrate_surveys_v3(database)
     assert result["converted_count"] == 3 and result["state"] == "completed"
-    assert database.surveys.options()["validator"] == {"$jsonSchema": SURVEY_SCHEMA}
+    assert database.surveys.options()["validator"] == {"$jsonSchema": SURVEY_SCHEMA_V3}
     for doc in docs:
         assert database[result["backup_collection"]].find_one({"_id": doc["_id"]}) == doc
         assert database.surveys.find_one({"_id": doc["_id"]}) == V3_PLAN.upgraded(doc)
@@ -121,6 +121,9 @@ def test_v1_to_v3_keeps_existing_user_session_question_and_allows_submit(databas
     assert list(database.users.find()) == users and list(database.sessions.find()) == sessions
     assert database[first["backup_collection"]].find_one() == doc
     assert database[second["backup_collection"]].find_one()["questions"] == doc["questions"]
+    # The historical migration still targets v3; only the current app needs v4.
+    assert database.surveys.options()["validator"] == {"$jsonSchema": SURVEY_SCHEMA_V3}
+    migrate_surveys_v4(database)
     with TestClient(create_app(mongo_settings)) as client:
         headers = {"Authorization": "Bearer " + login["access_token"]}
         base = "/api/surveys/" + str(doc["_id"])

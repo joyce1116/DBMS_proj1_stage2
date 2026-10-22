@@ -230,6 +230,25 @@ class QuestionOrder(StrictModel):
         return value
 
 
+class QuestionSelection(StrictModel):
+    # Malformed/unknown IDs deliberately share the owner-scoped 404 response;
+    # only the body shape is validated here.
+    version_id: Annotated[str, StringConstraints(strict=True)]
+
+
+class QuestionOptionMap(StrictModel):
+    local_id: OptionId
+    source_id: OptionId
+
+
+class QuestionSource(StrictModel):
+    question_id: QuestionId
+    family_id: str
+    version_id: str
+    version: Revision
+    option_map: Annotated[list[QuestionOptionMap], Field(max_length=50)]
+
+
 class SurveyTransition(StrictModel):
     expected_revision: Revision
 
@@ -321,6 +340,7 @@ class SurveySummary(StrictModel):
 class SurveyDetail(SurveySummary):
     questions: list[QuestionPublic]
     jump_rules: list[JumpRule]
+    question_sources: list[QuestionSource]
 
 
 class SurveyList(StrictModel):
