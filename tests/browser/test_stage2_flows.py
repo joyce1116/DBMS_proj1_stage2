@@ -17,7 +17,7 @@ import pytest
 
 pytestmark = [pytest.mark.browser, pytest.mark.integration]
 PASSWORD = "Browser_Password_123"
-SCREENSHOTS = Path("figures/stage2")
+SCREENSHOTS = Path("backup_figure/stage2")
 
 
 def request(client, method, path, *, code=200, **kwargs):

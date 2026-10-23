@@ -5,10 +5,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 backups/
+/backup_figure/
 
 # Local documentation and report files.
 /docs/
-/figures/
 /report.*
 /report/
 report_stage2.md
