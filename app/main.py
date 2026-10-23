@@ -14,6 +14,7 @@ from app.responses.routes import router as response_router, register_error_handl
 from app.questions.routes import router as question_router, register_error_handlers as question_errors
 from app.questions.access_routes import access_router, register_access_error_handlers
 from app.questions.usage_routes import usage_router
+from app.questions.statistics_routes import statistics_router
 from app.banks.routes import router as bank_router, register_error_handlers as bank_errors
 from app.web.routes import install_web
 
@@ -48,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(bank_router)
     application.include_router(access_router)
     application.include_router(usage_router)
+    application.include_router(statistics_router)
     register_error_handlers(application)
     response_errors(application)
     question_errors(application)

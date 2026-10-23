@@ -68,6 +68,7 @@ input:focus,textarea:focus,select:focus {
 h1,h2,h3,p {
   margin-top:0;
 }
+h1,h2,h3 { overflow-wrap:anywhere; }
 h1 {
   font-size:30px;
   line-height:1.35;
@@ -330,6 +331,7 @@ small {
 }
 .survey-card {
   display:flex;
+  min-width:0;
   flex-direction:column;
   min-height:224px;
 }
@@ -567,6 +569,7 @@ dialog::backdrop {
 .question-card .actions .button {
   margin-left:7px;
 }
+.question-card > .actions { flex-wrap:wrap; gap:9px; }
 .question-add {
   display:flex;
   align-items:center;
@@ -1190,6 +1193,67 @@ fieldset {
   padding:0;
   margin:0;
   min-width:0;
+}
+.workspace-nav {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-left:auto;
+}
+.workspace-nav a {
+  padding:8px 13px;
+  border-radius:8px;
+  font-size:14px;
+  white-space:nowrap;
+}
+.workspace-nav a[aria-current=page] {
+  background:#eef4e8;
+  color:var(--green);
+  font-weight:600;
+}
+.source-info {
+  border-top:1px solid var(--line);
+  margin-top:18px;
+  padding-top:14px;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:9px;
+}
+.source-info p { margin:0; }
+.source-info .actions { flex-wrap:wrap; gap:9px; }
+.selection-list { display:grid; gap:10px; }
+.selection-option {
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  padding:14px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  cursor:pointer;
+}
+.selection-option:has(input:checked) { background:#eef4e8; border-color:#7aa790; }
+.selection-option input { margin-top:5px; }
+.selection-option span { min-width:0; overflow-wrap:anywhere; }
+.selection-option small,.selection-preview,.selection-bank small { display:block; color:var(--muted); font-size:12px; }
+.selection-bank { text-align:left; cursor:pointer; color:inherit; font:inherit; }
+.table-scroll { overflow:auto; max-width:100%; margin-bottom:20px; }
+.table-scroll table { width:100%; border-collapse:collapse; text-align:left; font-size:13px; }
+.table-scroll th,.table-scroll td { border-bottom:1px solid var(--line); padding:12px; vertical-align:top; }
+.table-scroll th { color:var(--muted); white-space:nowrap; font-weight:600; }
+.table-scroll td { overflow-wrap:anywhere; min-width:80px; }
+.bank-entries,.bank-grants { display:grid; gap:14px; }
+@media (max-width:1000px) {
+  .brand span { display:none; }
+}
+@media (max-width:600px) {
+  .site-header { height:auto; min-height:82px; flex-wrap:wrap; padding:16px 20px; gap:10px; }
+  .site-header .brand { font-size:17px; }
+  .workspace-nav { order:3; width:100%; margin:0; gap:4px; }
+  .workspace-nav a { flex:1; text-align:center; font-size:13px; padding:7px; }
+  .page-heading { flex-wrap:wrap; }
+  .source-info .actions { margin-top:0; }
+  .selection-option { padding:12px; }
 }
 .sr-label {
   position:absolute;

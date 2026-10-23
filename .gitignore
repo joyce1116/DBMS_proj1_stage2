@@ -11,6 +11,7 @@ backups/
 /figures/
 /report.*
 /report/
+report_stage2.md
 
 # Word lock and temporary files.
 /~$*

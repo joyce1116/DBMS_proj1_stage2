@@ -11,6 +11,12 @@ let pageEpoch = 0;
 export function beginPage() { const epoch = ++pageEpoch; return () => epoch === pageEpoch; }
 
 const messages = {
+  'Share recipient not found':'没有找到这个用户名，请确认对方已注册。',
+  'Question bank not found':'没有找到题库，或共享权限已撤销。',
+  'Question version not found':'没有找到题目版本，或当前没有读取权限。已有问卷副本仍然保留。',
+  'Question bank, entry or version not found':'没有找到题库或题目，或当前没有权限。请刷新后重试。',
+  'Question bank metadata or entry changed, or this family is already in the bank':'题库已被修改，或同一题目家族已在库中。请刷新后检查当前版本。',
+  'Question version allocation conflicted or exhausted; retry later':'题目版本分配冲突，请稍后重试。',
   'Invalid credentials or expired session':'账号、密码不正确，或登录已过期。请重新登录。',
   'Username is already registered':'这个用户名已被注册，请换一个。',
   'Survey or question not found':'没有找到这份问卷，或你没有查看权限。',
@@ -67,7 +73,7 @@ export async function api(path, {method = 'GET', body, auth = true} = {}) {
   try { data = response.status === 204 ? null : await response.json(); }
   catch { throw new APIError(0, '未能确认服务器返回的结果，请重试。'); }
   if (!response.ok) {
-    if (response.status === 401 && auth) {
+    if (response.status === 401 && auth && sessionStorage.getItem('survey_token') === token) {
       sessionStorage.removeItem('survey_token'); setUser(null);
       window.dispatchEvent(new Event('session-expired'));
     }
@@ -99,8 +105,9 @@ export function openDialog(title, content, onSubmit) {
   const dialog = $('#dialog');
   dialog.innerHTML = `<form id="modal-form"><div class="dialog-heading"><h2 id="dialog-title">${escape(title)}</h2><button type="button" class="icon-button" data-close aria-label="关闭对话框">×</button></div>${content}<p data-error class="notice danger" role="alert" tabindex="-1" hidden></p><div class="actions end"><button type="button" class="button secondary" data-close>取消</button><button class="button" type="submit">保存</button></div></form>`;
   $$('[data-close]', dialog).forEach(button => button.onclick = () => dialog.close());
-  $('#modal-form', dialog).onsubmit = event => {
-    event.preventDefault(); busy($('button[type=submit]', dialog), () => onSubmit($('#modal-form', dialog), dialog), dialog);
+  const form = $('#modal-form', dialog);
+  form.onsubmit = event => {
+    event.preventDefault(); busy($('button[type=submit]', form), () => onSubmit(form, dialog), form);
   };
   dialog.showModal();
   return dialog;

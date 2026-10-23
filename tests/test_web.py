@@ -28,7 +28,9 @@ def test_public_shell_contains_no_business_data_or_remote_assets():
     assert "script-src 'self'" in response.headers["content-security-policy"]
     assert "https://" not in response.text
     assert "password_hash" not in response.text and "access_token" not in response.text
-    for name in ("styles.css", "app.js", "api.js", "editor.js", "fill.js", "results.js", "icon.svg"):
+    for name in ("styles.css", "app.js", "api.js", "editor.js", "fill.js", "results.js", "icon.svg",
+                 "question-form.js", "questions.js", "question-access.js", "banks.js",
+                 "question-statistics.js", "selection-picker.js"):
         asset = client.get("/assets/" + name)
         assert asset.status_code == 200, name
     assert client.get("/assets/does-not-exist.js").status_code == 404

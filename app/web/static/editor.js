@@ -1,4 +1,6 @@
-import {$, $$, api, escape, date, types, status, busy, toast, openDialog} from './api.js';
+import {$, $$, api, escape, date, types, status, busy, toast, openDialog, user} from './api.js';
+import {questionForm} from './question-form.js';
+import {chooseVersion} from './selection-picker.js';
 
 const operations = {eq:'等于 / 完全一致', contains_any:'包含任意一个', contains_all:'包含全部', ne:'不等于', gt:'大于', gte:'大于或等于', lt:'小于', lte:'小于或等于'};
 const numberInput = (id, label, value, {min = 0, max = '', step = 1, required = false} = {}) => `<div class="field"><label for="${id}">${label}</label><input id="${id}" name="${id}" type="number" step="${step}" min="${min}" ${max !== '' ? `max="${max}"` : ''} value="${value ?? ''}" ${required ? 'required' : ''}></div>`;
@@ -40,8 +42,26 @@ export async function editor(id, isCurrent = () => true) {
 
   function questions() {
     $('#editor-content').innerHTML = `${readonly() ? '<p class="notice">问卷已发布，题目和规则已固定。你可以查看统计或关闭收集。</p>' : ''}${survey.questions.length ? survey.questions.map((q,index) => `<article class="surface question-card"><div class="question-number">QUESTION ${String(index+1).padStart(2,'0')} · ${types[q.type]}</div><div class="card-top"><h3>${escape(q.title)}${q.required ? '<span class="required-mark" aria-hidden="true">*</span>' : ''}</h3>${readonly() ? '' : `<div class="actions"><button class="icon-button" data-up="${index}" ${index === 0 ? 'disabled' : ''} aria-label="上移第${index+1}题">↑</button><button class="icon-button" data-down="${index}" ${index === survey.questions.length-1 ? 'disabled' : ''} aria-label="下移第${index+1}题">↓</button><button class="button secondary small" data-edit="${index}">编辑</button><button class="icon-button" data-delete="${index}" aria-label="删除第${index+1}题">×</button></div>`}</div><div class="question-preview">${q.options ? q.options.map(o => `<p>${q.type === 'single_choice' ? '○' : '□'}　${escape(o.label)}</p>`).join('') : `<p>${q.type === 'text' ? `${q.min_length}–${q.max_length} 字` : `${q.integer_only ? '整数' : '数字'} · ${q.min_value ?? '不限下限'} 至 ${q.max_value ?? '不限上限'}`}</p>`}${q.type === 'multiple_choice' ? `<small>选择 ${q.min_selections}–${q.max_selections ?? q.options.length} 项</small>` : ''}</div></article>`).join('') : '<div class="empty"><div class="empty-symbol" aria-hidden="true">＋</div><h2>先添加第一道题目</h2><p>选择一种题型，写下你想了解的问题。</p></div>'}${readonly() ? '' : `<div class="question-add"><span>添加题目</span>${Object.entries(types).map(([kind,label]) => `<button class="button secondary small" data-add="${kind}">＋ ${label}</button>`).join('')}</div>`}`;
+    if (!readonly()) {
+      const add = document.createElement('button'); add.type = 'button'; add.id = 'select-question'; add.className = 'button small'; add.textContent = '从题库选题';
+      add.onclick = () => selectQuestion(); $('.question-add').append(add);
+    }
+    $$('.question-card').forEach((card,index) => {
+      const question = survey.questions[index];
+      const source = survey.question_sources.find(item => item.question_id === question.id);
+      const area = document.createElement('div'); area.className = 'source-info';
+      area.innerHTML = source ? `<p><span class="badge">题库来源 · v${source.version}</span> <a class="link-button" href="/#/questions/${source.version_id}">查看源版本</a> · <a class="link-button" href="/#/questions/${source.version_id}/statistics">跨问卷统计</a></p><small>本卷保存独立快照；源题目、题库换版及共享撤销不会改写本卷。</small>${readonly() ? '' : `<div class="actions"><button class="button secondary small" data-replace-source>替换来源</button><button class="button secondary small" data-change-mode>修改方式</button></div>`}` : `<small>本卷自定义题目</small>${readonly() ? '' : '<button class="link-button" data-save-library>存入我的题目</button>'}`;
+      card.append(area);
+      if ($('[data-replace-source]',area)) $('[data-replace-source]',area).onclick = () => selectQuestion(question);
+      if ($('[data-change-mode]',area)) $('[data-change-mode]',area).onclick = event => busy(event.currentTarget, () => changeMode(question,source));
+      if ($('[data-save-library]',area)) $('[data-save-library]',area).onclick = () => saveToLibrary(question);
+    });
     $$('[data-add]').forEach(button => button.onclick = () => questionDialog(button.dataset.add));
-    $$('[data-edit]').forEach(button => button.onclick = () => questionDialog(survey.questions[button.dataset.edit].type, survey.questions[button.dataset.edit]));
+    $$('[data-edit]').forEach(button => button.onclick = () => {
+      const question = survey.questions[button.dataset.edit];
+      const source = survey.question_sources.find(item => item.question_id === question.id);
+      return source ? busy(button, () => changeMode(question,source)) : questionDialog(question.type,question);
+    });
     $$('[data-delete]').forEach(button => button.onclick = () => busy(button, async () => {
       const question = survey.questions[button.dataset.delete];
       if (!confirm(`确认删除“${question.title}”？`)) return;
@@ -56,56 +76,75 @@ export async function editor(id, isCurrent = () => true) {
     }));
   }
 
-  function questionDialog(kind, previous = null) {
-    const dialog = openDialog(previous ? '编辑题目' : `添加${types[kind]}`, `<div class="field"><label for="question-title">题目标题</label><input id="question-title" name="title" required maxlength="500" value="${escape(previous?.title || '')}" placeholder="写下你的问题"></div><div class="field check-field"><label class="check-label"><input name="required" type="checkbox" ${previous?.required ? 'checked' : ''}>此题必须回答</label></div><div id="question-config"></div>`, async (form, modal) => {
-      const body = {type:kind, title:form.elements.title.value, required:form.elements.required.checked};
-      if (kind.endsWith('choice')) {
-        body.options = $$('.option-input', form).map(input => ({...(input.dataset.id ? {id:input.dataset.id} : {}), label:input.value}));
-        if (kind === 'multiple_choice') {
-          body.min_selections = numeric(form.elements.min_selections.value) ?? 0;
-          body.max_selections = numeric(form.elements.max_selections.value);
-        }
-      } else if (kind === 'text') {
-        body.min_length = numeric(form.elements.min_length.value) ?? 0;
-        body.max_length = numeric(form.elements.max_length.value) ?? 1000;
-      } else {
-        body.min_value = numeric(form.elements.min_value.value);
-        body.max_value = numeric(form.elements.max_value.value);
-        body.integer_only = form.elements.integer_only.checked;
-      }
+  function questionDialog(kind, previous = null, notice = '') {
+    questionForm(kind, previous, async (body, modal) => {
+      const form = $('form',modal);
       survey = await api(previous ? `${base}/questions/${previous.id}?expected_revision=${survey.revision}` : `${base}/questions?expected_revision=${survey.revision}`, {method:previous ? 'PUT' : 'POST', body});
+      if (!isCurrent() || !form.isConnected) return;
       modal.close(); shell(); toast('题目已保存');
-    });
-    const config = $('#question-config', dialog);
-    if (kind.endsWith('choice')) {
-      config.innerHTML = `<div class="form-section-title">选项</div><div id="options"></div><button class="link-button" type="button" id="add-option">＋ 添加选项</button><p class="form-note">2–50 个选项，选项文字不能重复。</p>${kind === 'multiple_choice' ? `<div class="field-row">${numberInput('min_selections','最少选择数',previous?.min_selections ?? 0,{max:50})}${numberInput('max_selections','最多选择数',previous?.max_selections ?? '',{max:50})}</div><p class="form-note">最多选择数留空表示不限；上下限相同表示恰好选择这些项。</p>` : ''}`;
-      function optionRow(option = {}) {
-        const row = document.createElement('div'); row.className = 'option-row';
-        row.innerHTML = `<span class="option-marker">${kind === 'single_choice' ? '○' : '□'}</span><input class="option-input" ${option.id ? `data-id="${escape(option.id)}"` : ''} value="${escape(option.label || '')}" required maxlength="200" aria-label="选项文字" placeholder="选项文字"><button class="icon-button" type="button" aria-label="移除此选项">×</button>`;
-        $('button',row).onclick = () => { if ($$('.option-row',dialog).length <= 2) return toast('至少保留两个选项'); row.remove(); };
-        $('#options',dialog).append(row);
-      }
-      (previous?.options || [{label:'选项 1'},{label:'选项 2'}]).forEach(optionRow);
-      $('#add-option',dialog).onclick = () => { if ($$('.option-row',dialog).length >= 50) return toast('最多添加 50 个选项'); optionRow(); };
-    } else if (kind === 'text') {
-      config.innerHTML = `<div class="field-row">${numberInput('min_length','最少字数',previous?.min_length ?? 0,{max:10000})}${numberInput('max_length','最多字数',previous?.max_length ?? 1000,{min:1,max:10000,required:true})}</div>`;
-    } else {
-      config.innerHTML = `<div class="field-row">${numberInput('min_value','最小值',previous?.min_value,{min:-1e15,max:1e15,step:'any'})}${numberInput('max_value','最大值',previous?.max_value,{min:-1e15,max:1e15,step:'any'})}</div><div class="field check-field"><label class="check-label"><input name="integer_only" type="checkbox" ${previous?.integer_only ? 'checked' : ''}>只允许整数</label></div><p class="notice danger" data-number-bound-error role="alert" hidden>只允许整数时，最小值和最大值也必须是整数。</p><p class="form-note">上下限留空表示不限；勾选“只允许整数”后，上下限也须为整数。有效数值范围为 ±10¹⁵。</p>`;
-      function validateBounds() {
-        const integerOnly = $('[name=integer_only]',config).checked;
-        let invalid = false;
-        for (const input of $$('input[type=number]',config)) {
-          input.step = integerOnly ? '1' : 'any';
-          const fractional = integerOnly && input.value !== '' && !Number.isInteger(input.valueAsNumber);
-          input.setCustomValidity(fractional ? '只允许整数时，最小值和最大值也必须是整数。' : '');
-          input.setAttribute('aria-invalid',String(fractional));
-          invalid ||= fractional;
+    }, {title:previous ? '编辑题目' : `添加${types[kind]}`, notice, isCurrent});
+  }
+
+  function selectQuestion(previous = null) {
+    chooseVersion({title:previous ? '替换来源版本' : '从题库选题', isCurrent, onChoose:async (version,modal) => {
+      const form = $('form',modal);
+      const path = previous ? `${base}/question-selections/${previous.id}` : `${base}/question-selections`;
+      survey = await api(`${path}?expected_revision=${survey.revision}`, {method:previous ? 'PUT' : 'POST',body:{version_id:version.id}});
+      if (!isCurrent() || !form.isConnected) return;
+      modal.close(); shell(); toast(previous ? '已换用所选版本，原有规则也已校验' : '已选入题目独立快照');
+    }});
+  }
+
+  async function changeMode(question,source) {
+    let original = null;
+    try { original = await api(`/api/questions/${source.version_id}`); }
+    catch (exception) { if (exception.code !== 404) throw exception; }
+    if (!isCurrent()) return;
+    const canRevise = original?.owner_id === user?.id;
+    const dialog = openDialog('选择修改方式', `<p class="notice">当前题目来自 v${source.version}。只改本卷会在内容变化时解除来源；创建新版本会保留旧版，并显式换入本卷。</p><div class="actions"><button type="button" class="button" id="edit-local-copy">只修改本卷副本</button>${canRevise ? '<button type="button" class="button secondary" id="derive-source">创建题目新版本</button>' : ''}</div>${canRevise ? '' : '<p class="form-note">只有题目原作者可派生其版本。共享已撤销时，本卷副本仍可独立编辑和统计。</p>'}`, async () => {});
+    $('button[type=submit]',dialog).hidden = true;
+    $('#edit-local-copy',dialog).onclick = () => {
+      dialog.close();
+      questionDialog(question.type,question,'内容实际变化后，本题将成为本卷自定义题，不再计入源版本跨卷统计。其他问卷和题库不受影响。');
+    };
+    if ($('#derive-source',dialog)) $('#derive-source',dialog).onclick = () => {
+      dialog.close();
+      const content = {...question}; delete content.id;
+      if (content.options) content.options = content.options.map(option => ({...option,id:source.option_map.find(map => map.local_id === option.id).source_id}));
+      let created = null;
+      questionForm(content.type,content,async (body,modal) => {
+        const form = $('form',modal);
+        if (!created) created = await api(`/api/questions/${source.version_id}/versions`,{method:'POST',body});
+        if (!isCurrent() || !form.isConnected) return;
+        $$('input,textarea,select',form).forEach(input => input.disabled = true);
+        try {
+          survey = await api(`${base}/question-selections/${question.id}?expected_revision=${survey.revision}`,{method:'PUT',body:{version_id:created.id}});
+        } catch (exception) {
+          $('button[type=submit]',form).hidden = true;
+          throw new Error(`新版本 v${created.version} 已保存在“我的题目”。本卷换入失败：${exception.message} 可关闭后刷新问卷，再选用该版本。`);
         }
-        $('[data-number-bound-error]',config).hidden = !invalid;
+        if (!isCurrent() || !form.isConnected) return;
+        modal.close(); shell(); toast(`已创建 v${created.version} 并换入本卷，旧版本保留`);
+      },{title:'创建题目新版本',notice:'保存会创建不可变新版本，并用它替换本卷这一题；其他卷和题库当前版本保持原样。',isCurrent});
+    };
+  }
+
+  function saveToLibrary(question) {
+    let created = null;
+    openDialog('存入我的题目','<p class="notice">把当前自定义题保存为个人题目 v1，再尝试将本题关联到它；本卷题目 ID 保留。若现有跳转规则不兼容，题目仍会保存，本卷保持原样，可调整规则后重新选用。</p>',async (form,modal) => {
+      const content = {...question}; delete content.id;
+      if (content.options) content.options = content.options.map(option => ({label:option.label}));
+      if (!created) created = await api('/api/questions',{method:'POST',body:content});
+      if (!isCurrent() || !form.isConnected) return;
+      try {
+        survey = await api(`${base}/question-selections/${question.id}?expected_revision=${survey.revision}`,{method:'PUT',body:{version_id:created.id}});
+      } catch (exception) {
+        $('button[type=submit]',form).hidden = true;
+        throw new Error(`题目已保存到“我的题目”。本卷关联失败：${exception.message} 可关闭后刷新问卷，再选用该版本。`);
       }
-      $$('input',config).forEach(input => input.addEventListener('input',validateBounds));
-      validateBounds();
-    }
+      if (!isCurrent() || !form.isConnected) return;
+      modal.close(); shell(); toast('已保存题目并关联本卷');
+    });
   }
 
   function settings() {

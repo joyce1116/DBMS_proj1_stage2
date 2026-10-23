@@ -2,12 +2,18 @@ import {$, $$, api, user, setUser, beginPage, escape, date, status, toast, busy,
 import {editor} from './editor.js';
 import {fillSurvey} from './fill.js';
 import {results} from './results.js';
+import {questionsPage, questionPage} from './questions.js';
+import {banksPage, bankPage} from './banks.js';
+import {questionStatistics} from './question-statistics.js';
 
 let renderVersion = 0;
 let listOffset = 0;
 const listLimit = 12;
 
 function account() {
+  const route = location.hash.slice(1) || '/surveys';
+  $('#workspace-nav').hidden = !user;
+  $('#workspace-nav').innerHTML = user ? [['surveys','我的问卷'],['questions','我的题目'],['banks','题库']].map(([path,label]) => `<a href="/#/${path}" ${route.startsWith('/'+path) && !location.pathname.startsWith('/survey/') ? 'aria-current="page"' : ''}>${label}</a>`).join('') : '';
   $('#account').innerHTML = user ? `<a class="account-name" href="/#/surveys"><span class="avatar">${escape(user.username[0].toUpperCase())}</span>${escape(user.username)}</a><button id="logout" class="link-button">退出</button>` : '<span class="muted">让每一份回答，都有价值</span>';
   if (user) $('#logout').onclick = () => busy($('#logout'), async () => {
     await api('/api/auth/logout', {method:'POST'});
@@ -37,16 +43,17 @@ async function dashboard(isCurrent = () => true) {
   // Only the first metric is global; page-level counts are labelled explicitly.
   const active = data.items.filter(s => s.availability === 'open').length;
   $('#main').innerHTML = `<section class="page-heading"><div><div class="eyebrow">YOUR QUESTIONNAIRES</div><h1>我的问卷</h1><p>让想法成为问题，让回答带来方向。</p></div><button class="button" id="new-survey">＋ 创建问卷</button></section><div class="dashboard-summary"><section class="intro-card"><div class="eyebrow">每一份好奇，都可以开始</div><h2>从一个问题出发。</h2><p>添加题目与跳转规则，发布后即可分享给填写者。</p></section><section class="surface metric"><span class="muted">全部问卷</span><strong>${data.total}</strong><small>仅显示你创建的问卷</small></section><section class="surface metric"><span class="muted">本页收集中</span><strong>${active}</strong><small>已发布且仍在有效期内</small></section></div><div class="section-heading"><h2>问卷列表</h2><button class="link-button" id="refresh-list">刷新列表 ↻</button></div><p data-error class="notice danger" role="alert" tabindex="-1" hidden></p>${data.total ? `<div class="survey-grid">${data.items.map(s => `<article class="surface survey-card"><div class="card-top"><h3><a href="/#/surveys/${s.id}/edit">${escape(s.title)}</a></h3>${status(s)}</div><p class="description">${escape(s.description || '还没有填写问卷说明')}</p><div class="meta-row"><span>${s.question_count} 道题目</span><span>更新于 ${date(s.updated_at)}</span></div><div class="card-footer"><a class="button secondary small" href="/#/surveys/${s.id}/edit">${s.status === 'draft' ? '编辑问卷' : '查看问卷'}</a><a class="link-button" href="/#/surveys/${s.id}/results">查看统计 →</a></div></article>`).join('')}</div>${pager(data.total,listOffset,listLimit)}` : '<section class="empty"><div class="empty-symbol" aria-hidden="true">☷</div><h2>你的第一份问卷，从这里开始</h2><p>先写下标题，再添加题目。未发布的草稿只有你能看到。</p><button class="button" id="empty-create">创建第一份问卷</button></section>'}`;
-  $('#new-survey').onclick = createSurvey;
-  if ($('#empty-create')) $('#empty-create').onclick = createSurvey;
+  $('#new-survey').onclick = () => createSurvey(isCurrent);
+  if ($('#empty-create')) $('#empty-create').onclick = () => createSurvey(isCurrent);
   $('#refresh-list').onclick = () => busy($('#refresh-list'), () => dashboard(isCurrent));
   if ($('[data-previous]')) $('[data-previous]').onclick = () => { listOffset = Math.max(0,listOffset-listLimit); render(); };
   if ($('[data-next]')) $('[data-next]').onclick = () => { listOffset += listLimit; render(); };
 }
 
-function createSurvey() {
+function createSurvey(isCurrent = () => true) {
   openDialog('创建一份问卷', `<div class="field"><label for="survey-title">问卷标题</label><input id="survey-title" name="title" required maxlength="200" placeholder="例如：课程体验调查"></div><div class="field"><label for="survey-description">问卷说明</label><textarea id="survey-description" name="description" maxlength="5000" placeholder="向填写者介绍这份问卷的目的"></textarea></div><div class="field check-field"><label class="check-label"><input name="allow_anonymous" type="checkbox">允许匿名填写</label></div><div class="field check-field"><label class="check-label"><input name="allow_repeat" type="checkbox">允许同一账号多次填写</label></div>`, async (form,dialog) => {
     const survey = await api('/api/surveys', {method:'POST', body:{title:form.elements.title.value, description:form.elements.description.value, allow_anonymous:form.elements.allow_anonymous.checked, allow_repeat:form.elements.allow_repeat.checked}});
+    if (!isCurrent() || !form.isConnected || $('form',dialog) !== form) return;
     dialog.close(); toast('问卷草稿已创建'); location.href = `/#/surveys/${survey.id}/edit`;
   });
 }
@@ -54,13 +61,20 @@ function createSurvey() {
 async function render() {
   const version = ++renderVersion;
   const isCurrent = beginPage();
+  $('#dialog').close();
   account();
   if (!user) { auth(); return; }
-  $('#main').innerHTML = '<div class="loading" role="status">正在读取问卷…</div>';
+  $('#main').innerHTML = '<div class="loading" role="status">正在读取…</div>';
   try {
     const share = location.pathname.match(/^\/survey\/([^/]+)$/);
     if (share) return await fillSurvey(share[1], isCurrent);
     const route = location.hash.slice(1) || '/surveys';
+    const question = route.match(/^\/questions\/([a-f0-9]{24})(\/statistics)?$/);
+    const bank = route.match(/^\/banks\/([a-f0-9]{24})$/);
+    if (question) return question[2] ? await questionStatistics(question[1], isCurrent) : await questionPage(question[1], isCurrent);
+    if (bank) return await bankPage(bank[1], isCurrent);
+    if (route === '/questions') return await questionsPage(isCurrent);
+    if (route === '/banks') return await banksPage(isCurrent);
     const match = route.match(/^\/surveys\/([a-f0-9]{24})\/(edit|results)$/);
     if (match) {
       if (match[2] === 'edit') await editor(match[1], isCurrent);
@@ -74,7 +88,7 @@ async function render() {
 }
 
 window.addEventListener('hashchange', render);
-$('#dialog').addEventListener('close', () => $('#dialog').replaceChildren());
+$('#dialog').addEventListener('close', () => { if (!$('#dialog').open) $('#dialog').replaceChildren(); });
 window.addEventListener('session-expired', () => { beginPage(); $('#dialog').close(); account(); auth(); });
 document.addEventListener('click', event => {
   if (event.target.closest('.skip-link')) { event.preventDefault(); $('#main').focus(); return; }
