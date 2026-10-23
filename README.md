@@ -47,8 +47,8 @@
 ### 1. 获取代码并安装依赖
 
 ```powershell
-git clone https://github.com/joyce1116/DBMS_proj1.git
-cd DBMS_proj1
+git clone https://github.com/joyce1116/DBMS_proj1_stage2.git
+cd DBMS_proj1_stage2
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
